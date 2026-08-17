@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}{{ order.order_no }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">{{ order.order_no }} — Build {{ order.quantity|qty }}x {{ order.item.name }}</h4>
+  <span class="badge bg-{{ {'draft':'secondary','completed':'success','cancelled':'danger'}[order.status] }} fs-6">{{ order.status }}</span>
+</div>
+
+{% if error %}
+<div class="alert alert-danger">{{ error }}</div>
+{% endif %}
+
+<div class="row mb-3">
+  <div class="col-md-4">
+    <div class="card p-3">
+      <div class="text-muted small">Order Date</div>
+      <div>{{ order.order_date|dt('%d-%b-%Y') }}</div>
+      {% if order.notes %}
+      <div class="text-muted small mt-2">Notes</div>
+      <div>{{ order.notes }}</div>
+      {% endif %}
+    </div>
+  </div>
+  <div class="col-md-8">
+    <div class="card p-3">
+      <div class="text-muted small mb-2">Actions</div>
+      {% if order.status == 'draft' and perms.edit %}
+      <form method="post" action="/production/{{ order.id }}/complete" class="d-inline" onsubmit="return confirm('This will consume the components below and add finished stock. Continue?');">
+        <button class="btn btn-success btn-sm">Complete (consumes components, adds finished stock)</button>
+      </form>
+      <form method="post" action="/production/{{ order.id }}/cancel" class="d-inline">
+        <button class="btn btn-outline-danger btn-sm">Cancel</button>
+      </form>
+      {% else %}
+      <span class="text-muted">No further actions.</span>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="card p-3">
+  <h6>Bill of Materials for this order</h6>
+  <table class="table table-sm mb-0">
+    <thead><tr><th>Component</th><th class="text-end">Qty per unit</th><th class="text-end">Required</th><th class="text-end">Current Stock</th></tr></thead>
+    <tbody>
+    {% for line in order.components %}
+      <tr class="{{ 'table-danger' if line.component_item.current_stock < line.quantity_required and order.status == 'draft' else '' }}">
+        <td>{{ line.component_item.name }}</td>
+        <td class="text-end">{{ line.quantity_per_unit|qty }}</td>
+        <td class="text-end">{{ line.quantity_required|qty }}</td>
+        <td class="text-end">{{ line.component_item.current_stock|qty }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

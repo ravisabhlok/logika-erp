@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Edit Serial Number — {{ item.name }}{% endblock %}
+{% block content %}
+<h4 class="mb-3">Edit Serial Number — {{ item.name }}</h4>
+
+<div class="card p-4" style="max-width: 500px;">
+  <form method="post" action="/inventory/{{ item.id }}/serials/{{ serial.id }}/edit">
+    <div class="mb-3">
+      <label class="form-label">Serial Number *</label>
+      <input type="text" name="serial_number" class="form-control {{ 'is-invalid' if error else '' }}" value="{{ serial.serial_number }}" required autofocus>
+      {% if error %}<div class="invalid-feedback d-block">{{ error }}</div>{% endif %}
+    </div>
+    <button type="submit" class="btn btn-dark">Save</button>
+    <a href="/inventory/{{ item.id }}/ledger" class="btn btn-link">Cancel</a>
+  </form>
+</div>
+{% endblock %}

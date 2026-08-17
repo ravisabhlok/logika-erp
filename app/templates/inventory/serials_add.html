@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Add Serial Numbers — {{ item.name }}{% endblock %}
+{% block content %}
+<h4 class="mb-3">Add Serial Numbers — {{ item.name }}</h4>
+<p class="text-muted">
+  Current stock: {{ item.current_stock|qty }}. Already recorded: {{ recorded_count }}.
+  Still need a serial number: <strong>{{ remaining|qty }}</strong>.
+</p>
+
+<div class="card p-4" style="max-width: 600px;">
+  <form method="post" action="/inventory/{{ item.id }}/serials/add">
+    <div class="mb-3">
+      <label class="form-label">Serial Numbers *</label>
+      <textarea name="serial_numbers" class="form-control {{ 'is-invalid' if error else '' }}" rows="6"
+                placeholder="One per line, or comma-separated">{{ submitted }}</textarea>
+      {% if error %}<div class="invalid-feedback d-block">{{ error }}</div>{% endif %}
+      <div class="form-text">This only records serial numbers for stock you already have — it doesn't change Current Stock.</div>
+    </div>
+    <button type="submit" class="btn btn-dark">Save</button>
+    <a href="/inventory/{{ item.id }}/ledger" class="btn btn-link">Cancel</a>
+  </form>
+</div>
+{% endblock %}

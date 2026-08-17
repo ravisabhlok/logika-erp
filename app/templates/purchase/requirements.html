@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}What to Order{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">What to Order</h4>
+  <div>
+    <a href="/purchase/requirements/export" class="btn btn-outline-secondary btn-sm">
+      <i class="bi bi-file-earmark-excel"></i> Download Excel
+    </a>
+    {% if perms.add %}
+    <a href="/purchase/new" class="btn btn-primary btn-sm">+ New Purchase Order</a>
+    {% endif %}
+  </div>
+</div>
+
+<p class="text-muted small">
+  Combines every open (draft or confirmed) sales order plus each item's own
+  minimum-stock level, nets against current stock and anything already on
+  order with a vendor, and breaks down assembled items into their BOM
+  components when finished stock falls short. Delivered and cancelled sales
+  orders are not counted; stock reserved for other things this page doesn't
+  know about (e.g. quotes not yet entered as orders) obviously isn't either.
+</p>
+
+<div class="card p-3">
+  {% if requirements %}
+  <table class="table table-sm mb-0">
+    <thead>
+      <tr>
+        <th>Item</th>
+        <th class="text-end">Sales Demand</th>
+        <th class="text-end">Min Stock</th>
+        <th class="text-end">In Stock</th>
+        <th class="text-end">On Order</th>
+        <th class="text-end">Still to Order</th>
+        <th>Driven By</th>
+        <th>Last Vendor</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for r in requirements %}
+      <tr class="{{ 'table-warning' if highlight and highlight in r.orders else '' }}">
+        <td><a href="/items/{{ r.item.id }}">{{ r.item.name }}</a></td>
+        <td class="text-end">{{ r.sales_demand|qty }}</td>
+        <td class="text-end">{{ r.reorder_level|qty }}</td>
+        <td class="text-end">{{ r.in_stock|qty }}</td>
+        <td class="text-end">{{ r.on_order|qty }}</td>
+        <td class="text-end fw-semibold low-stock">{{ r.shortfall|qty }}</td>
+        <td>
+          {% for order_no in r.orders %}
+          <span class="badge bg-secondary">{{ order_no }}</span>
+          {% endfor %}
+          {% if not r.orders %}
+          <span class="badge bg-light text-dark border">Min stock</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if r.last_vendor %}
+          <a href="/vendors/{{ r.last_vendor.id }}">{{ r.last_vendor.name }}</a>
+          {% else %}
+          <span class="text-muted">—</span>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="text-muted mb-0">Nothing to order — open sales orders and minimum stock levels are all covered by current stock and open purchase orders.</p>
+  {% endif %}
+</div>
+{% endblock %}

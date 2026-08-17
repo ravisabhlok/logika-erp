@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Production Orders{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">Production Orders</h4>
+  {% if perms.add %}
+  <a href="/production/new" class="btn btn-dark btn-sm">+ New Production Order</a>
+  {% endif %}
+</div>
+<div class="card p-3">
+  <table class="table table-hover align-middle mb-0">
+    <thead><tr><th>Order#</th><th>Item Built</th><th class="text-end">Qty</th><th>Date</th><th>Status</th></tr></thead>
+    <tbody>
+    {% for o in orders %}
+      <tr onclick="window.location='/production/{{ o.id }}'" style="cursor:pointer;">
+        <td>{{ o.order_no }}</td>
+        <td>{{ o.item.name }}</td>
+        <td class="text-end">{{ o.quantity|qty }}</td>
+        <td>{{ o.order_date|dt('%d-%b-%Y') }}</td>
+        <td><span class="badge bg-{{ {'draft':'secondary','completed':'success','cancelled':'danger'}[o.status] }}">{{ o.status }}</span></td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="text-muted text-center">No production orders yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% block title %}{{ item.name }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start mb-3">
+  <div>
+    <h4 class="mb-1">
+      {{ item.name }}
+      {% if item.has_serial %} <span class="badge bg-info text-dark">serialized</span>{% endif %}
+      {% if item.is_assembly %} <span class="badge bg-primary">assembled</span>{% endif %}
+      {% if not item.is_active %} <span class="badge bg-secondary">inactive</span>{% endif %}
+    </h4>
+    <div>
+      {% for c in item.categories %}<span class="badge bg-light text-dark border">{{ c.name }}</span>{% endfor %}
+    </div>
+    {% if item.small_description %}
+    <div class="text-muted">{{ item.small_description }}</div>
+    {% endif %}
+  </div>
+  <div>
+    {% if perms.edit %}
+    <a href="/items/{{ item.id }}/edit" class="btn btn-outline-secondary btn-sm">Edit</a>
+    {% endif %}
+    {% if perms.add %}
+    <a href="/items/new?clone_from={{ item.id }}" class="btn btn-outline-secondary btn-sm">Clone</a>
+    {% endif %}
+    {% if perms.delete %}
+    <form method="post" action="/items/{{ item.id }}/delete" class="d-inline" onsubmit="return confirm('Delete this item?');">
+      <button class="btn btn-outline-danger btn-sm">Delete</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+
+{% if item.description %}
+<div class="card p-3 mb-3">
+  <div class="text-muted small">Description</div>
+  <div>{{ item.description }}</div>
+</div>
+{% endif %}
+
+<div class="row g-3 mb-3">
+  <div class="col-md-3">
+    <div class="card p-3"><div class="text-muted small">Unit</div><div class="fs-5">{{ item.unit }}</div></div>
+  </div>
+  <div class="col-md-3">
+    <div class="card p-3"><div class="text-muted small">Purchase Price</div><div class="fs-5">{{ item.purchase_price|inr }}</div></div>
+  </div>
+  <div class="col-md-3">
+    <div class="card p-3"><div class="text-muted small">Sales Price</div><div class="fs-5">{{ item.sales_price|inr }}</div></div>
+  </div>
+  <div class="col-md-3">
+    <div class="card p-3">
+      <div class="text-muted small">Current Stock</div>
+      <div class="fs-5 {{ 'low-stock' if item.current_stock <= item.reorder_level else '' }}">{{ item.current_stock|qty }}</div>
+      <div class="text-muted small">Reorder at {{ item.reorder_level|qty }}</div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card p-3">
+      <div class="text-muted small">Sales Demand</div>
+      <div class="fs-5">{{ sales_demand|qty }}</div>
+      <div class="text-muted small">Open sales orders</div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card p-3">
+      <div class="text-muted small">On Order</div>
+      <div class="fs-5">{{ on_order|qty }}</div>
+      <div class="text-muted small">Placed with vendors</div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card p-3"><div class="text-muted small">Reorder Level</div><div class="fs-5">{{ item.reorder_level|qty }}</div></div>
+  </div>
+  <div class="col-md-3">
+    <div class="card p-3"><div class="text-muted small">GST %</div><div class="fs-5">{{ "%.2f"|format(item.gst_percentage) if item.gst_percentage is not none else "-" }}</div></div>
+  </div>
+</div>
+
+{% if item.is_assembly %}
+<div class="card p-3 mb-3">
+  <div class="d-flex justify-content-between align-items-center mb-2">
+    <h6 class="mb-0">Bill of Materials — made of</h6>
+    <a href="/production/new?item_id={{ item.id }}" class="btn btn-dark btn-sm">Build (Production Order)</a>
+  </div>
+  {% if item.bom_components %}
+  <table class="table table-sm mb-0">
+    <thead><tr><th>Component</th><th class="text-end">Qty per unit</th><th class="text-end">Current Stock</th></tr></thead>
+    <tbody>
+    {% for b in item.bom_components %}
+      <tr>
+        <td><a href="/items/{{ b.component_item_id }}">{{ b.component_item.name }}</a></td>
+        <td class="text-end">{{ b.quantity|qty }}</td>
+        <td class="text-end">{{ b.component_item.current_stock|qty }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="text-muted mb-0">No components defined yet — edit this item to add its Bill of Materials.</p>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if item.used_in_boms %}
+<div class="card p-3 mb-3">
+  <h6 class="mb-2">Used In — component of</h6>
+  <table class="table table-sm mb-0">
+    <thead><tr><th>Assembly Item</th><th class="text-end">Qty per unit</th><th class="text-end">Current Stock</th></tr></thead>
+    <tbody>
+    {% for b in item.used_in_boms %}
+      <tr>
+        <td><a href="/items/{{ b.item_id }}">{{ b.item.name }}</a></td>
+        <td class="text-end">{{ b.quantity|qty }}</td>
+        <td class="text-end">{{ b.item.current_stock|qty }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% if item.attachments %}
+{% set images = item.attachments|selectattr("kind", "equalto", "image")|list %}
+{% set pdfs = item.attachments|selectattr("kind", "equalto", "pdf")|list %}
+<div class="card p-3 mb-3">
+  <h6 class="mb-2">Attachments</h6>
+  {% if images %}
+  <div class="d-flex flex-wrap gap-2 mb-2">
+    {% for a in images %}
+      <a href="/static/uploads/{{ a.stored_filename }}" target="_blank" class="attachment-thumb" style="position:relative;">
+        <img src="/static/uploads/{{ a.stored_filename }}" alt="{{ a.original_filename }}">
+      </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% if pdfs %}
+  <ul class="list-unstyled mb-0">
+    {% for a in pdfs %}
+    <li class="py-1"><a href="/static/uploads/{{ a.stored_filename }}" target="_blank"><i class="bi bi-file-earmark-pdf"></i> {{ a.original_filename }}</a></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  {% if perms.edit %}
+  <div class="form-text mt-1">Manage photos and documents from Edit.</div>
+  {% endif %}
+</div>
+{% endif %}
+
+<a href="/inventory/{{ item.id }}/ledger" class="btn btn-outline-secondary btn-sm">View Stock Ledger</a>
+<a href="/items" class="btn btn-link">Back to Items</a>
+{% endblock %}

@@ -1,0 +1,221 @@
+{% extends "base.html" %}
+{% block title %}{{ "Edit" if item else "New" }} Item{% endblock %}
+{% block content %}
+{% set source = item or clone_source %}
+<h4 class="mb-3">{{ "Edit" if item else "New" }} Item</h4>
+{% if clone_source %}
+<div class="alert alert-info py-2 small">Cloning from <strong>{{ clone_source.name }}</strong> — photos and documents are not copied. Review the fields below, then Save.</div>
+{% endif %}
+<div class="card p-4" style="max-width: 800px;">
+  <form method="post" action="{{ '/items/%d/edit' % item.id if item else '/items/new' }}">
+    <div class="row">
+      <div class="col-md-6 mb-3">
+        <label class="form-label">Name *</label>
+        <input type="text" name="name" class="form-control" value="{{ item.name if item else (clone_source.name ~ ' (Copy)' if clone_source else '') }}" required>
+      </div>
+      <div class="col-md-6 mb-3">
+        <label class="form-label">Unit</label>
+        <input type="text" name="unit" class="form-control" value="{{ source.unit if source else 'Nos' }}">
+      </div>
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Small Description</label>
+      <input type="text" name="small_description" class="form-control" maxlength="255"
+             value="{{ source.small_description if source and source.small_description else '' }}"
+             placeholder="Short summary shown in search and listings">
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Description</label>
+      <textarea name="description" class="form-control" rows="2" placeholder="Optional notes about this item">{{ source.description if source else '' }}</textarea>
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Categories</label>
+      <select name="categories" id="category-select" class="form-control" multiple="multiple" style="width:100%;">
+        {% for c in categories %}
+          <option value="{{ c.name }}" {% if source and c.name in source.categories|map(attribute='name')|list %}selected{% endif %}>{{ c.name }}</option>
+        {% endfor %}
+      </select>
+      <div class="form-text">Click to pick from existing categories, or type a new one and press Enter to create it. Tag an item with more than one — e.g. "Sensor" + "Spare" — to find it in more than one report later.</div>
+    </div>
+    <div class="row">
+      <div class="col-md-6 mb-3">
+        <label class="form-label">HSN Code</label>
+        <input type="text" name="hsn_code" class="form-control" maxlength="10" value="{{ source.hsn_code if source and source.hsn_code else '' }}" placeholder="e.g. 8471">
+      </div>
+      <div class="col-md-6 mb-3">
+        <label class="form-label">GST %</label>
+        <input type="number" step="0.01" min="0" max="100" name="gst_percentage" class="form-control" value="{{ source.gst_percentage if source and source.gst_percentage is not none else 0 }}">
+      </div>
+    </div>
+    <div class="row">
+      <div class="col-md-6 mb-3">
+        <label class="form-label">Purchase Price</label>
+        <input type="number" step="0.01" name="purchase_price" class="form-control" value="{{ source.purchase_price if source else 0 }}">
+      </div>
+      <div class="col-md-6 mb-3">
+        <label class="form-label">Sales Price</label>
+        <input type="number" step="0.01" name="sales_price" class="form-control" value="{{ source.sales_price if source else 0 }}">
+      </div>
+    </div>
+    <div class="row">
+      <div class="col-md-6 mb-3">
+        <label class="form-label">Reorder Level</label>
+        <input type="number" step="any" name="reorder_level" class="form-control" value="{{ source.reorder_level|qty if source else 0 }}">
+      </div>
+      {% if not item %}
+      <div class="col-md-6 mb-3">
+        <label class="form-label">Opening Stock</label>
+        <input type="number" step="any" name="current_stock" class="form-control" value="0">
+      </div>
+      {% else %}
+      <div class="col-md-6 mb-3">
+        <label class="form-label">Current Stock</label>
+        <input type="text" class="form-control" value="{{ item.current_stock|qty }}" disabled>
+        <div class="form-text">Adjust stock from the Inventory page, not here.</div>
+      </div>
+      {% endif %}
+    </div>
+    <div class="mb-3 form-check">
+      <input type="checkbox" name="has_serial" class="form-check-input" id="has_serial" value="true" {% if source and source.has_serial %}checked{% endif %}>
+      <label class="form-check-label" for="has_serial">This item has serial numbers</label>
+      <div class="form-text">If checked, serial numbers will be captured when this item is received on a purchase order.</div>
+    </div>
+
+    <div class="mb-3 form-check">
+      <input type="checkbox" name="is_assembly" class="form-check-input" id="is_assembly" value="true"
+             {% if source and source.is_assembly %}checked{% endif %} onchange="toggleBomSection()">
+      <label class="form-check-label" for="is_assembly">This item is manufactured by assembling other items</label>
+      <div class="form-text">If checked, tell us what it's made of below. You'll then be able to raise a Production Order to build stock of it.</div>
+    </div>
+
+    <div id="bom-section" class="mb-3" style="display:none;">
+      <label class="form-label">Bill of Materials — made of:</label>
+      <table class="table table-sm" id="bomTable" style="table-layout: fixed; width: 100%;">
+        <colgroup>
+          <col>
+          <col style="width:140px;">
+          <col style="width:44px;">
+        </colgroup>
+        <thead><tr><th>Component Item</th><th>Qty per unit</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <button type="button" class="btn btn-outline-secondary btn-sm" onclick="addBomRow()">+ Add Component</button>
+    </div>
+
+    {% if item %}
+    <div class="mb-3 form-check">
+      <input type="checkbox" name="is_active" class="form-check-input" id="is_active" value="true" {% if item.is_active %}checked{% endif %}>
+      <label class="form-check-label" for="is_active">Active</label>
+    </div>
+    {% endif %}
+    <button type="submit" class="btn btn-dark">Save</button>
+    <a href="/items" class="btn btn-link">Cancel</a>
+  </form>
+</div>
+
+{% if item %}
+{% set images = item.attachments|selectattr("kind", "equalto", "image")|list %}
+{% set pdfs = item.attachments|selectattr("kind", "equalto", "pdf")|list %}
+<div class="card p-4 mt-3" style="max-width: 800px;">
+  <h6 class="mb-3">Photos</h6>
+  {% if images %}
+  <div class="d-flex flex-wrap gap-2 mb-3">
+    {% for a in images %}
+    <div class="attachment-thumb">
+      <a href="/static/uploads/{{ a.stored_filename }}" target="_blank">
+        <img src="/static/uploads/{{ a.stored_filename }}" alt="{{ a.original_filename }}">
+      </a>
+      <form method="post" action="/items/{{ item.id }}/attachments/{{ a.id }}/delete" onsubmit="return confirm('Delete this photo?');">
+        <button class="attachment-remove" title="Delete"><i class="bi bi-x"></i></button>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="text-muted small mb-3">No photos yet.</p>
+  {% endif %}
+  <form method="post" action="/items/{{ item.id }}/attachments" enctype="multipart/form-data" class="d-flex gap-2 align-items-center mb-4">
+    <input type="file" name="files" accept=".jpg,.jpeg,.png,.gif,.webp" multiple class="form-control form-control-sm" required>
+    <button type="submit" class="btn btn-outline-secondary btn-sm text-nowrap">Add photos</button>
+  </form>
+
+  <h6 class="mb-3">Documents (PDF)</h6>
+  {% if pdfs %}
+  <ul class="list-unstyled mb-3">
+    {% for a in pdfs %}
+    <li class="d-flex justify-content-between align-items-center py-1">
+      <a href="/static/uploads/{{ a.stored_filename }}" target="_blank"><i class="bi bi-file-earmark-pdf"></i> {{ a.original_filename }}</a>
+      <form method="post" action="/items/{{ item.id }}/attachments/{{ a.id }}/delete" onsubmit="return confirm('Delete this file?');">
+        <button class="btn btn-link btn-sm text-danger p-0">Remove</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="text-muted small mb-3">No documents yet.</p>
+  {% endif %}
+  <form method="post" action="/items/{{ item.id }}/attachments" enctype="multipart/form-data" class="d-flex gap-2 align-items-center">
+    <input type="file" name="files" accept=".pdf" multiple class="form-control form-control-sm" required>
+    <button type="submit" class="btn btn-outline-secondary btn-sm text-nowrap">Add PDFs</button>
+  </form>
+</div>
+{% else %}
+<div class="mt-3" style="max-width: 800px;">
+  <p class="text-muted small">You'll be able to attach photos and documents once this item is saved.</p>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+{% set source = item or clone_source %}
+<script>
+  $('#category-select').select2({
+    theme: 'bootstrap',
+    tags: true,
+    tokenSeparators: [',', ';'],
+    placeholder: 'Select or type to add categories',
+    width: '100%',
+  });
+
+  const possibleComponents = [
+    {% for c in possible_components %}{ id: {{ c.id }}, name: {{ c.name|tojson }}, unit: {{ c.unit|tojson }} },{% endfor %}
+  ];
+  const existingBom = [
+    {% if source %}{% for b in source.bom_components %}{ component_item_id: {{ b.component_item_id }}, quantity: {{ b.quantity|float }} },{% endfor %}{% endif %}
+  ];
+
+  function toggleBomSection() {
+    const checked = document.getElementById('is_assembly').checked;
+    document.getElementById('bom-section').style.display = checked ? 'block' : 'none';
+  }
+
+  function addBomRow(selectedId, qty) {
+    const tbody = document.querySelector('#bomTable tbody');
+    const row = document.createElement('tr');
+    const options = possibleComponents.map(c =>
+      `<option value="${c.id}" ${selectedId == c.id ? 'selected' : ''}>${c.name} (${c.unit})</option>`
+    ).join('');
+    row.innerHTML = `
+      <td><select name="component_item_id" class="form-select form-select-sm bom-component-select"><option value="">-- item --</option>${options}</select></td>
+      <td><input type="number" name="component_quantity" class="form-control form-control-sm" min="0.0001" step="any" value="${qty || 1}"></td>
+      <td><button type="button" class="btn btn-sm btn-outline-danger" onclick="this.closest('tr').remove();">x</button></td>
+    `;
+    tbody.appendChild(row);
+    // Searchable dropdown — catalogs can run to hundreds of items, and a
+    // plain <select> makes finding one by typing impossible.
+    $(row).find('.bom-component-select').select2({
+      theme: 'bootstrap',
+      placeholder: '-- item --',
+      width: '100%',
+      allowClear: true,
+    });
+  }
+
+  toggleBomSection();
+  if (existingBom.length) {
+    existingBom.forEach(b => addBomRow(b.component_item_id, b.quantity));
+  } else if (document.getElementById('is_assembly').checked) {
+    addBomRow();
+  }
+</script>
+{% endblock %}

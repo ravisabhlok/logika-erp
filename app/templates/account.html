@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}My Account{% endblock %}
+{% block content %}
+<h4 class="mb-3">My Account</h4>
+<div class="card p-4" style="max-width: 500px;">
+  <div class="mb-3">
+    <div class="text-muted small">Username</div>
+    <div>{{ user.username }}</div>
+  </div>
+  <div class="mb-4">
+    <div class="text-muted small">Role</div>
+    <div>{{ user.role }}</div>
+  </div>
+  <h6>Change Password</h6>
+  <form method="post" action="/account/password">
+    <div class="mb-3">
+      <label class="form-label">Current Password</label>
+      <input type="password" name="current_password" class="form-control" required>
+    </div>
+    <div class="mb-3">
+      <label class="form-label">New Password</label>
+      <input type="password" name="new_password" class="form-control" required minlength="6">
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Confirm New Password</label>
+      <input type="password" name="confirm_password" class="form-control" required minlength="6">
+    </div>
+    <button type="submit" class="btn btn-dark">Update Password</button>
+  </form>
+</div>
+{% endblock %}

@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<h4 class="mb-3">Dashboard</h4>
+
+<div class="row g-3 mb-4">
+  <div class="col-md-3">
+    <div class="card p-3"><div class="text-muted small">Customers</div><div class="fs-3">{{ total_customers }}</div></div>
+  </div>
+  <div class="col-md-3">
+    <div class="card p-3"><div class="text-muted small">Vendors</div><div class="fs-3">{{ total_vendors }}</div></div>
+  </div>
+  <div class="col-md-3">
+    <div class="card p-3"><div class="text-muted small">Items</div><div class="fs-3">{{ total_items }}</div></div>
+  </div>
+  <div class="col-md-3">
+    <div class="card p-3"><div class="text-muted small">Open Sales / Purchase</div><div class="fs-3">{{ open_sales }} / {{ open_purchases }}</div></div>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-md-4">
+    <div class="card p-3">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <h6 class="mb-0">Low Stock Alerts</h6>
+        <a href="/purchase/requirements" class="small">Full requirements &rarr;</a>
+      </div>
+      {% if low_stock_items %}
+      <table class="table table-sm mb-0">
+        <thead><tr><th>Item</th><th>Stock</th><th>Reorder At</th></tr></thead>
+        <tbody>
+        {% for i in low_stock_items %}
+          <tr><td>{{ i.name }}</td><td class="low-stock">{{ i.current_stock|qty }}</td><td>{{ i.reorder_level|qty }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p class="text-muted mb-0">Nothing below reorder level.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="col-md-4">
+    <div class="card p-3">
+      <h6>Recent Sales Orders</h6>
+      {% if recent_sales %}
+      <table class="table table-sm mb-0">
+        <thead><tr><th>Order#</th><th>Customer</th><th>Status</th></tr></thead>
+        <tbody>
+        {% for so in recent_sales %}
+          <tr><td><a href="/sales/{{ so.id }}">{{ so.order_no }}</a></td><td>{{ so.customer.name }}</td><td>{{ so.status }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p class="text-muted mb-0">No sales orders yet.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="col-md-4">
+    <div class="card p-3">
+      <h6>Recent Purchase Orders</h6>
+      {% if recent_purchases %}
+      <table class="table table-sm mb-0">
+        <thead><tr><th>Order#</th><th>Vendor</th><th>Status</th></tr></thead>
+        <tbody>
+        {% for po in recent_purchases %}
+          <tr><td><a href="/purchase/{{ po.id }}">{{ po.order_no }}</a></td><td>{{ po.vendor.name }}</td><td>{{ po.status }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p class="text-muted mb-0">No purchase orders yet.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="col-md-4">
+    <div class="card p-3">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <h6 class="mb-0">Payments Due</h6>
+        <a href="/sales/payments-due" class="small">All payments due &rarr;</a>
+      </div>
+      {% if payments_due_rows %}
+      <table class="table table-sm mb-0">
+        <thead><tr><th>Order#</th><th class="text-end">Amount</th><th>Due</th></tr></thead>
+        <tbody>
+        {% for r in payments_due_rows %}
+          <tr class="{{ 'table-danger' if r.overdue else '' }}">
+            <td><a href="/sales/{{ r.order.id }}">{{ r.order.order_no }}</a></td>
+            <td class="text-end">{{ r.term.amount|inr }}</td>
+            <td>{{ r.term.due_date.strftime('%d-%b-%Y') if r.term.due_date else '—' }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p class="text-muted mb-0">Nothing pending.</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

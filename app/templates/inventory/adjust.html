@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Adjust Stock{% endblock %}
+{% block content %}
+<h4 class="mb-3">Manual Stock Adjustment</h4>
+<div class="card p-4" style="max-width: 550px;">
+  <form method="post" action="/inventory/adjust">
+    <div class="mb-3">
+      <label class="form-label">Item *</label>
+      <select name="item_id" id="item-select" class="form-select" required style="width:100%;">
+        <option value="">-- select item --</option>
+        {% for i in items %}<option value="{{ i.id }}">{{ i.name }} (current: {{ i.current_stock|qty }})</option>{% endfor %}
+      </select>
+    </div>
+    <div class="row">
+      <div class="col-md-6 mb-3">
+        <label class="form-label">Direction</label>
+        <select name="direction" class="form-select">
+          <option value="increase">Increase</option>
+          <option value="decrease">Decrease</option>
+        </select>
+      </div>
+      <div class="col-md-6 mb-3">
+        <label class="form-label">Quantity *</label>
+        <input type="number" name="quantity" class="form-control" min="0.0001" step="any" required>
+      </div>
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Reason / Notes</label>
+      <textarea name="notes" class="form-control" rows="2" placeholder="e.g. stock count correction, damage, etc."></textarea>
+    </div>
+    <button type="submit" class="btn btn-dark">Apply Adjustment</button>
+    <a href="/inventory" class="btn btn-link">Cancel</a>
+  </form>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+$('#item-select').select2({
+  theme: 'bootstrap',
+  placeholder: '-- select item --',
+  width: '100%',
+});
+</script>
+{% endblock %}

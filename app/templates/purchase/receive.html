@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Receive {{ order.order_no }}{% endblock %}
+{% block content %}
+<h4 class="mb-3">Receive {{ order.order_no }}</h4>
+<p class="text-muted">Vendor: {{ order.vendor.name }}. Confirming receipt will add the quantities below to stock.</p>
+
+<div class="card p-4">
+  <form method="post" action="/purchase/{{ order.id }}/receive">
+    <table class="table table-sm align-middle">
+      <thead><tr><th>Item</th><th class="text-end" style="width:100px;">Qty</th><th>Serial Numbers</th></tr></thead>
+      <tbody>
+      {% for line in order.items %}
+        <tr>
+          <td>
+            {{ line.item.name }}
+            {% if line.item.has_serial %}<span class="badge bg-info text-dark">serialized</span>{% endif %}
+          </td>
+          <td class="text-end">{{ line.quantity|qty }}</td>
+          <td>
+            {% if line.item.has_serial %}
+              <textarea name="serials_{{ line.id }}" class="form-control form-control-sm {{ 'is-invalid' if errors.get(line.id) else '' }}" rows="2"
+                        placeholder="Enter {{ line.quantity|qty }} serial number(s), one per line or comma-separated">{{ submitted.get(line.id, '') }}</textarea>
+              {% if errors.get(line.id) %}
+                <div class="invalid-feedback d-block">{{ errors.get(line.id) }}</div>
+              {% endif %}
+            {% else %}
+              <span class="text-muted">Not serialized — no input needed.</span>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+
+    <button type="submit" class="btn btn-success">Confirm Receipt (adds stock)</button>
+    <a href="/purchase/{{ order.id }}" class="btn btn-link">Cancel</a>
+  </form>
+</div>
+{% endblock %}

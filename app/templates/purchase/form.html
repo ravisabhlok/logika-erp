@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% block title %}{{ "Edit" if order else "New" }} Purchase Order{% endblock %}
+{% block content %}
+<h4 class="mb-3">{{ "Edit " ~ order.order_no if order else "New Purchase Order" }}</h4>
+<div class="card p-4">
+  <form method="post" action="{{ '/purchase/%d/edit' % order.id if order else '/purchase/new' }}" id="purchaseOrderForm">
+    <div class="row">
+      <div class="col-md-6 mb-3">
+        <label class="form-label">Vendor *</label>
+        <select name="vendor_id" class="form-select" required>
+          <option value="">-- select vendor --</option>
+          {% for v in vendors %}<option value="{{ v.id }}" {% if submitted.vendor_id == v.id %}selected{% endif %}>{{ v.name }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="col-md-3 mb-3">
+        <label class="form-label">Currency</label>
+        <select name="currency" id="currencySelect" class="form-select" onchange="onCurrencyChange()">
+          {% for c in currencies %}<option value="{{ c }}" {% if c == (submitted.currency or 'INR') %}selected{% endif %}>{{ c }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="col-md-3 mb-3">
+        <label class="form-label">Exchange Rate (to INR)</label>
+        <input type="number" name="exchange_rate" id="exchangeRateInput" class="form-control" step="any" min="0"
+               value="{{ submitted.exchange_rate or 1 }}" {% if not submitted.currency or submitted.currency == 'INR' %}disabled{% endif %}>
+        <div class="form-text">Reference only — line prices below are entered directly in the selected currency.</div>
+      </div>
+    </div>
+
+    <table class="table table-sm" id="lineTable">
+      <thead><tr><th>Item</th><th style="width:120px;">Qty</th><th style="width:140px;">Unit Price</th><th style="width:120px;">Line Total</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <button type="button" class="btn btn-outline-secondary btn-sm mb-3" onclick="addRow()">+ Add Line</button>
+
+    <div class="mb-3">
+      <label class="form-label">Notes</label>
+      <textarea name="notes" class="form-control" rows="2">{{ submitted.notes or '' }}</textarea>
+    </div>
+
+    <div class="fw-bold mb-3">Order Total: <span id="orderTotal">0.00</span></div>
+
+    <button type="submit" class="btn btn-dark">{{ "Save Changes" if order else "Create Purchase Order" }}</button>
+    <a href="{{ '/purchase/%d' % order.id if order else '/purchase' }}" class="btn btn-link">Cancel</a>
+  </form>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Placed in the extra_js block (rendered near the end of the page body,
+// after base.html's own trailing script tags) rather than inline in the
+// main content area — this script calls formatMoney()/formatINR()
+// synchronously while pre-filling an existing order's lines (see the
+// addRow() calls at the bottom), and those helpers are only defined in
+// base.html's own script block, further down the page. Living inline
+// higher up meant a ReferenceError on load for any order with existing
+// lines (Edit), aborting the fill loop after the first row — a brand new,
+// empty order form never hit it, since addRow() with no arguments skips
+// the immediate recalc, so the bug stayed hidden until an Edit page tried
+// to pre-fill real data.
+//
+// Same fix as the Sales Order form: several plain <input> fields here (Qty,
+// Unit Price) would otherwise submit the form via the browser's default
+// "implicit submit" on Enter. Only clicking (or keyboard-activating) the
+// Save button should submit.
+document.getElementById('purchaseOrderForm').addEventListener('keydown', function (e) {
+  if (e.key === 'Enter' && e.target.tagName !== 'TEXTAREA' && e.target.type !== 'submit') {
+    e.preventDefault();
+  }
+});
+
+const items = [
+  {% for i in items %}{ id: {{ i.id }}, name: {{ i.name|tojson }}, price: {{ i.purchase_price|float }}, stock: {{ i.current_stock|float }} },{% endfor %}
+];
+const submittedLines = [
+  {% for l in submitted.lines %}{ item_id: {{ l.item_id }}, quantity: {{ l.quantity|tojson }}, unit_price: {{ l.unit_price|tojson }} },{% endfor %}
+];
+
+function addRow(selectedId, qty, price) {
+  const tbody = document.querySelector('#lineTable tbody');
+  const row = document.createElement('tr');
+  const options = items.map(i => `<option value="${i.id}" ${selectedId == i.id ? 'selected' : ''} data-price="${i.price}">${i.name} (stock: ${i.stock})</option>`).join('');
+  row.innerHTML = `
+    <td><select name="item_id" class="form-select form-select-sm item-select" onchange="onItemChange(this)"><option value="">-- item --</option>${options}</select></td>
+    <td><input type="number" name="quantity" class="form-control form-control-sm qty-input" min="0.0001" step="any" value="${qty || 1}" oninput="recalcRow(this)"></td>
+    <td><input type="number" step="0.01" name="unit_price" class="form-control form-control-sm price-input" value="${price != null ? price : '0.00'}" oninput="recalcRow(this)"></td>
+    <td><span class="line-total">0.00</span></td>
+    <td><button type="button" class="btn btn-sm btn-outline-danger" onclick="this.closest('tr').remove(); recalcTotal();">x</button></td>
+  `;
+  tbody.appendChild(row);
+  if (selectedId) recalcRow(row.querySelector('.qty-input'));
+}
+
+function onItemChange(select) {
+  const row = select.closest('tr');
+  const currency = document.getElementById('currencySelect').value;
+  // Item.purchase_price is always stored in INR (this app has no
+  // per-currency price book), so only auto-fill it when the order itself
+  // is in INR — otherwise it'd silently plant a rupee number into a
+  // dollar/euro field. For a foreign-currency order the vendor's own
+  // quoted price has to be typed in by hand.
+  if (currency === 'INR') {
+    const price = parseFloat(select.selectedOptions[0]?.dataset.price || 0);
+    // Plain <input type="number"> — must stay plain numeric, never comma-formatted.
+    row.querySelector('.price-input').value = price.toFixed(2);
+  } else {
+    row.querySelector('.price-input').value = '0.00';
+  }
+  recalcRow(select);
+}
+
+function onCurrencyChange() {
+  const currency = document.getElementById('currencySelect').value;
+  const rateInput = document.getElementById('exchangeRateInput');
+  rateInput.disabled = (currency === 'INR');
+  if (currency === 'INR') rateInput.value = 1;
+  // Re-render every line + the order total in the newly selected currency's
+  // symbol/grouping (the underlying stored value.dataset.value is untouched).
+  document.querySelectorAll('#lineTable tbody tr').forEach(row => recalcRow(row.querySelector('.qty-input')));
+}
+
+function recalcRow(el) {
+  const row = el.closest('tr');
+  const currency = document.getElementById('currencySelect').value;
+  const qty = parseFloat(row.querySelector('.qty-input').value) || 0;
+  const price = parseFloat(row.querySelector('.price-input').value) || 0;
+  const lineTotal = price * qty;
+  const lineTotalEl = row.querySelector('.line-total');
+  // data-value keeps the raw number for recalcTotal() to sum; textContent
+  // holds the formatted display string, which parseFloat() can't read
+  // back (it stops at the first comma/symbol).
+  lineTotalEl.dataset.value = lineTotal;
+  lineTotalEl.textContent = formatMoney(lineTotal, currency);
+  recalcTotal();
+}
+
+function recalcTotal() {
+  const currency = document.getElementById('currencySelect').value;
+  let total = 0;
+  document.querySelectorAll('.line-total').forEach(el => total += parseFloat(el.dataset.value) || 0);
+  document.getElementById('orderTotal').textContent = formatMoney(total, currency);
+}
+
+if (submittedLines.length) {
+  submittedLines.forEach(l => addRow(l.item_id, l.quantity, l.unit_price));
+} else {
+  addRow();
+}
+recalcTotal();
+</script>
+{% endblock %}

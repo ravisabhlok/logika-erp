@@ -1,0 +1,270 @@
+{% extends "base.html" %}
+{% block title %}{{ order.order_no }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">{{ order.order_no }}</h4>
+  <div>
+    {% if order.status in ('draft', 'confirmed', 'cancelled') and perms.edit %}
+    <a href="/sales/{{ order.id }}/edit" class="btn btn-outline-secondary btn-sm">Edit</a>
+    {% endif %}
+    {% if order.status != 'cancelled' %}
+    <a href="/purchase/requirements?highlight={{ order.order_no }}" class="btn btn-outline-primary btn-sm">What to Order</a>
+    {% endif %}
+    <a href="/sales/{{ order.id }}/pdf" target="_blank" class="btn btn-outline-primary btn-sm">Download PDF</a>
+    <span class="badge bg-{{ {'draft':'secondary','confirmed':'primary','delivered':'success','cancelled':'danger'}[order.status] }} fs-6">{{ order.status }}</span>
+  </div>
+</div>
+
+<div class="row mb-3">
+  <div class="col-md-4">
+    <div class="card p-3">
+      <div class="text-muted small">Customer</div>
+      <div>{{ order.customer.name }}</div>
+      <div class="text-muted small mt-2">Order Date</div>
+      <div>{{ order.order_date|dt('%d-%b-%Y') }}</div>
+      {% if order.customer_po_no %}
+      <div class="text-muted small mt-2">Customer PO No</div>
+      <div>{{ order.customer_po_no }}</div>
+      {% endif %}
+      {% if order.customer_po_date %}
+      <div class="text-muted small mt-2">Customer PO Date</div>
+      <div>{{ order.customer_po_date.strftime('%d-%b-%Y') }}</div>
+      {% endif %}
+      {% if order.expected_shipment_date %}
+      <div class="text-muted small mt-2">Expected Shipment Date</div>
+      <div>{{ order.expected_shipment_date.strftime('%d-%b-%Y') }}</div>
+      {% endif %}
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card p-3">
+      <div class="text-muted small">Bill To</div>
+      {% if order.billing_address %}
+      <div style="white-space: pre-line;">{{ order.billing_address }}</div>
+      {% elif order.customer.address %}
+      <div style="white-space: pre-line;">{{ order.customer.address }}</div>
+      {% else %}
+      <div class="text-muted">—</div>
+      {% endif %}
+      <div class="text-muted small mt-3">Ship To</div>
+      {% if order.ship_to_customer %}
+      <div class="fw-semibold">{{ order.ship_to_customer.name }}</div>
+      {% endif %}
+      {% if order.shipping_address %}
+      <div style="white-space: pre-line;">{{ order.shipping_address }}</div>
+      {% elif order.ship_to_customer and order.ship_to_customer.address %}
+      <div style="white-space: pre-line;">{{ order.ship_to_customer.address }}</div>
+      {% elif not order.ship_to_customer and order.customer.address %}
+      <div style="white-space: pre-line;">{{ order.customer.address }}</div>
+      {% else %}
+      <div class="text-muted">—</div>
+      {% endif %}
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card p-3">
+      <div class="text-muted small mb-2">Actions</div>
+      {% if not perms.edit %}
+      <span class="text-muted">No further actions.</span>
+      {% elif order.status == 'draft' %}
+      <form method="post" action="/sales/{{ order.id }}/status" class="d-inline">
+        <input type="hidden" name="new_status" value="confirmed">
+        <button class="btn btn-primary btn-sm">Confirm Order</button>
+      </form>
+      <form method="post" action="/sales/{{ order.id }}/status" class="d-inline">
+        <input type="hidden" name="new_status" value="cancelled">
+        <button class="btn btn-outline-danger btn-sm">Cancel</button>
+      </form>
+      {% elif order.status == 'confirmed' %}
+      <form method="post" action="/sales/{{ order.id }}/status" class="d-inline" onsubmit="return confirm('This will deduct stock for all items. Continue?');">
+        <input type="hidden" name="new_status" value="delivered">
+        <button class="btn btn-success btn-sm">Mark Delivered (deducts stock)</button>
+      </form>
+      <form method="post" action="/sales/{{ order.id }}/status" class="d-inline">
+        <input type="hidden" name="new_status" value="cancelled">
+        <button class="btn btn-outline-danger btn-sm">Cancel</button>
+      </form>
+      {% elif order.status == 'cancelled' %}
+      <span class="text-muted">Cancelled — use Edit above to revive it back to draft.</span>
+      {% else %}
+      <span class="text-muted">No further actions.</span>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="card p-3">
+  <table class="table table-sm mb-0">
+    <thead><tr><th>Item</th><th class="text-end">Qty</th><th class="text-end">Unit Price</th><th class="text-end">Total</th></tr></thead>
+    <tbody>
+    {% for line in order.items %}
+      <tr>
+        <td><a href="/items/{{ line.item.id }}">{{ line.item.name }}</a></td>
+        <td class="text-end">{{ line.quantity|qty }}</td>
+        <td class="text-end">{{ line.unit_price|inr }}</td>
+        <td class="text-end">{{ line.total|inr }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+    <tfoot>
+      <tr><th colspan="3" class="text-end">Subtotal</th><th class="text-end">{{ order.total_amount|inr }}</th></tr>
+      <tr><th colspan="3" class="text-end">GST</th><th class="text-end">{{ (order.gst_amount or 0)|inr }}</th></tr>
+      <tr><th colspan="3" class="text-end">Invoice Value</th><th class="text-end">{{ (order.total_amount + (order.gst_amount or 0))|inr }}</th></tr>
+    </tfoot>
+  </table>
+</div>
+
+<div class="card p-3 mt-3" id="payment-schedule">
+  <div class="d-flex justify-content-between align-items-center mb-2">
+    <div class="text-muted small">Payment Schedule</div>
+    {% if perms.edit %}
+    <a href="/sales/{{ order.id }}/payment-terms/edit" class="btn btn-outline-secondary btn-sm">
+      {{ "Edit Payment Schedule" if order.payment_terms else "+ Add Payment Terms" }}
+    </a>
+    {% endif %}
+  </div>
+  {% if order.payment_terms %}
+  {% set terms_total = order.payment_terms|sum(attribute='amount')|float %}
+  {% set invoice_value = (order.total_amount + (order.gst_amount or 0))|float %}
+  {% if (terms_total - invoice_value)|abs > 0.01 %}
+  <div class="alert alert-warning py-2 mb-2">
+    Payment schedule totals {{ terms_total|inr }}, which doesn't match the Invoice Value of {{ invoice_value|inr }}
+    ({{ "short by " + (invoice_value - terms_total)|inr if terms_total < invoice_value else "over by " + (terms_total - invoice_value)|inr }}).
+  </div>
+  {% endif %}
+  <table class="table table-sm mb-0">
+    <thead>
+      <tr>
+        <th>Description</th>
+        <th class="text-end">%</th>
+        <th class="text-end">Amount</th>
+        <th>Due Date</th>
+        <th>Secured By</th>
+        <th>Status</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+    {% set today = now().date() %}
+    {% for t in order.payment_terms %}
+      <tr>
+        <td>{{ t.description }}</td>
+        <td class="text-end">{{ ("%.2f"|format(t.percentage)) if t.percentage is not none else "—" }}</td>
+        <td class="text-end">{{ t.amount|inr }}</td>
+        <td class="{{ 'low-stock' if t.status == 'pending' and t.due_date and t.due_date.date() < today else '' }}">
+          {% if t.due_date %}
+          {{ t.due_date.strftime('%d-%b-%Y') }}
+          {% elif t.days_after_invoice is not none %}
+          <span class="text-muted">{{ t.days_after_invoice }} days after invoice — date pending</span>
+          {% else %}
+          —
+          {% endif %}
+        </td>
+        <td>
+          {% if t.secured_by == 'bank_guarantee' %}
+          Bank Guarantee{% if t.bg_expiry_date %} <span class="text-muted small">(expires {{ t.bg_expiry_date.strftime('%d-%b-%Y') }})</span>{% endif %}
+          {% else %}
+          Cash
+          {% endif %}
+        </td>
+        <td class="term-status-cell">
+          {% if t.status == 'received' %}
+          <span class="badge bg-success">Received{% if t.received_date %} {{ t.received_date.strftime('%d-%b-%Y') }}{% endif %}</span>
+          {% else %}
+          <span class="badge bg-secondary">Pending</span>
+          {% endif %}
+        </td>
+        <td class="term-actions-cell">
+          {% if perms.edit %}
+          <form method="post" action="/sales/{{ order.id }}/payment-terms/{{ t.id }}/status" class="d-inline-flex align-items-center gap-1 payment-term-status-form">
+            <input type="hidden" name="return_to" value="/sales/{{ order.id }}#payment-schedule">
+            {% if t.status == 'received' %}
+            <input type="hidden" name="new_status" value="pending">
+            <button class="btn btn-outline-secondary btn-sm">Undo</button>
+            {% else %}
+            <input type="hidden" name="new_status" value="received">
+            <input type="date" name="received_date" class="form-control form-control-sm" style="width:140px;" value="{{ today.isoformat() }}" required>
+            <button class="btn btn-outline-success btn-sm">Mark Received</button>
+            {% endif %}
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+    <tfoot>
+      <tr><th colspan="2" class="text-end">Total Scheduled</th><th class="text-end">{{ terms_total|inr }}</th><th colspan="4"></th></tr>
+    </tfoot>
+  </table>
+  {% else %}
+  <p class="text-muted mb-0">No payment terms set up yet.</p>
+  {% endif %}
+</div>
+
+{% if order.notes %}
+<div class="card p-3 mt-3">
+  <div class="text-muted small">Notes</div>
+  <div>{{ order.notes }}</div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Mark Received / Undo update in place via fetch — no page navigation, so
+// the person doesn't lose their scroll position on a long order. Listens
+// on the table body rather than each form individually (event delegation)
+// so the replacement form injected after a successful update is wired up
+// automatically, without re-attaching a listener by hand.
+(function () {
+  const tbody = document.querySelector('#payment-schedule table tbody');
+  if (!tbody) return;
+
+  function todayISO() {
+    return new Date().toISOString().slice(0, 10);
+  }
+
+  tbody.addEventListener('submit', function (e) {
+    const form = e.target.closest('.payment-term-status-form');
+    if (!form) return;
+    e.preventDefault();
+
+    const row = form.closest('tr');
+    const statusCell = row.querySelector('.term-status-cell');
+    const actionsCell = row.querySelector('.term-actions-cell');
+    const returnTo = form.querySelector('[name=return_to]').value;
+    const submitBtn = form.querySelector('button');
+    submitBtn.disabled = true;
+
+    fetch(form.action, {
+      method: 'POST',
+      headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      body: new FormData(form),
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (!data.ok) { submitBtn.disabled = false; return; }
+        if (data.status === 'received') {
+          statusCell.innerHTML = `<span class="badge bg-success">Received${data.received_date ? ' ' + data.received_date : ''}</span>`;
+          actionsCell.innerHTML = `
+            <form method="post" action="${form.action}" class="d-inline-flex align-items-center gap-1 payment-term-status-form">
+              <input type="hidden" name="return_to" value="${returnTo}">
+              <input type="hidden" name="new_status" value="pending">
+              <button class="btn btn-outline-secondary btn-sm">Undo</button>
+            </form>`;
+        } else {
+          statusCell.innerHTML = '<span class="badge bg-secondary">Pending</span>';
+          actionsCell.innerHTML = `
+            <form method="post" action="${form.action}" class="d-inline-flex align-items-center gap-1 payment-term-status-form">
+              <input type="hidden" name="return_to" value="${returnTo}">
+              <input type="hidden" name="new_status" value="received">
+              <input type="date" name="received_date" class="form-control form-control-sm" style="width:140px;" value="${todayISO()}" required>
+              <button class="btn btn-outline-success btn-sm">Mark Received</button>
+            </form>`;
+        }
+      })
+      .catch(() => { submitBtn.disabled = false; });
+  });
+})();
+</script>
+{% endblock %}

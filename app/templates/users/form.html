@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}{{ "Edit" if edit_user else "New" }} User{% endblock %}
+{% block content %}
+<h4 class="mb-3">{{ "Edit" if edit_user else "New" }} User</h4>
+<div class="card p-4" style="max-width: 600px;">
+  <form method="post" action="{{ '/users/%d/edit' % edit_user.id if edit_user else '/users/new' }}">
+    {% if not edit_user %}
+    <div class="mb-3">
+      <label class="form-label">Username *</label>
+      <input type="text" name="username" class="form-control" required autofocus>
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Password *</label>
+      <input type="password" name="password" class="form-control" required minlength="6">
+      <div class="form-text">At least 6 characters.</div>
+    </div>
+    {% else %}
+    <div class="mb-3">
+      <label class="form-label">Username</label>
+      <input type="text" class="form-control" value="{{ edit_user.username }}" disabled>
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Reset Password</label>
+      <input type="password" name="new_password" class="form-control" minlength="6" placeholder="Leave blank to keep current password">
+    </div>
+    {% endif %}
+
+    <div class="mb-3">
+      <label class="form-label">Full Name</label>
+      <input type="text" name="full_name" class="form-control" value="{{ edit_user.full_name if edit_user else '' }}">
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label">Account Type</label>
+      <select name="account_role" id="account_role" class="form-select" onchange="togglePermRole()">
+        <option value="staff" {% if not edit_user or edit_user.role == 'staff' %}selected{% endif %}>Staff (permissions controlled by Role, below)</option>
+        <option value="admin" {% if edit_user and edit_user.role == 'admin' %}selected{% endif %}>Admin (full access to everything)</option>
+      </select>
+    </div>
+
+    <div class="mb-3" id="perm-role-field">
+      <label class="form-label">Role</label>
+      <select name="permission_role_id" class="form-select">
+        <option value="">-- No role (no access) --</option>
+        {% for r in roles %}
+          <option value="{{ r.id }}" {% if edit_user and edit_user.permission_role_id == r.id %}selected{% endif %}>{{ r.name }}</option>
+        {% endfor %}
+      </select>
+      {% if not roles %}
+      <div class="form-text">No roles exist yet — <a href="/roles/new">create one first</a> to assign fine-grained permissions.</div>
+      {% endif %}
+    </div>
+
+    {% if edit_user %}
+    <div class="mb-3 form-check">
+      <input type="checkbox" name="is_active" class="form-check-input" id="is_active" value="true" {% if edit_user.is_active %}checked{% endif %}>
+      <label class="form-check-label" for="is_active">Active</label>
+    </div>
+    {% endif %}
+
+    <button type="submit" class="btn btn-dark">Save</button>
+    <a href="/users" class="btn btn-link">Cancel</a>
+  </form>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  function togglePermRole() {
+    const isAdmin = document.getElementById('account_role').value === 'admin';
+    document.getElementById('perm-role-field').style.display = isAdmin ? 'none' : 'block';
+  }
+  togglePermRole();
+</script>
+{% endblock %}

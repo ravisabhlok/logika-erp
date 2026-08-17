@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}New Production Order{% endblock %}
+{% block content %}
+<h4 class="mb-3">New Production Order</h4>
+
+{% if not assemblies %}
+<div class="alert alert-warning">
+  No items are marked as "assembled from other items" yet. Edit an item and check that box, add its Bill of Materials, then come back here.
+</div>
+{% endif %}
+
+<div class="card p-4">
+  <form method="post" action="/production/new">
+    <div class="row">
+      <div class="col-md-6 mb-3">
+        <label class="form-label">Item to Build *</label>
+        <select name="item_id" id="item-select" class="form-select" required onchange="renderPreview()">
+          <option value="">-- select item --</option>
+          {% for a in assemblies %}<option value="{{ a.id }}" {% if preselect_item_id == a.id %}selected{% endif %}>{{ a.name }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="col-md-6 mb-3">
+        <label class="form-label">Quantity to Build *</label>
+        <input type="number" name="quantity" id="qty-input" class="form-control" min="0.0001" step="any" value="1" required oninput="renderPreview()">
+      </div>
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Notes</label>
+      <textarea name="notes" class="form-control" rows="2"></textarea>
+    </div>
+
+    <div class="mb-3">
+      <div class="text-muted small mb-1">Components required</div>
+      <table class="table table-sm" id="previewTable">
+        <thead><tr><th>Component</th><th class="text-end">Required</th><th class="text-end">In Stock</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <button type="submit" class="btn btn-dark">Create Production Order</button>
+    <a href="/production" class="btn btn-link">Cancel</a>
+  </form>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  const bomData = {
+    {% for a in assemblies %}
+      "{{ a.id }}": [
+        {% for b in a.bom_components %}
+          { name: {{ b.component_item.name|tojson }}, qty_per_unit: {{ b.quantity|float }}, stock: {{ b.component_item.current_stock|float }} },
+        {% endfor %}
+      ],
+    {% endfor %}
+  };
+
+  function renderPreview() {
+    const itemId = document.getElementById('item-select').value;
+    const qty = parseFloat(document.getElementById('qty-input').value) || 0;
+    const tbody = document.querySelector('#previewTable tbody');
+    tbody.innerHTML = '';
+    const components = bomData[itemId] || [];
+    if (!itemId) {
+      tbody.innerHTML = '<tr><td colspan="4" class="text-muted">Select an item to see its Bill of Materials.</td></tr>';
+      return;
+    }
+    if (!components.length) {
+      tbody.innerHTML = '<tr><td colspan="4" class="text-danger">This item has no Bill of Materials defined — edit it first.</td></tr>';
+      return;
+    }
+    components.forEach(c => {
+      const required = c.qty_per_unit * qty;
+      const short = required > c.stock;
+      const row = document.createElement('tr');
+      if (short) row.className = 'table-danger';
+      row.innerHTML = `<td>${c.name}</td><td class="text-end">${required}</td><td class="text-end">${c.stock}</td><td>${short ? '<span class="badge bg-danger">short</span>' : ''}</td>`;
+      tbody.appendChild(row);
+    });
+  }
+
+  renderPreview();
+</script>
+{% endblock %}

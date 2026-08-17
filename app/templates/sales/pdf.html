@@ -1,0 +1,264 @@
+<!--
+Standalone print layout for the Sales Order PDF (GET /sales/{id}/pdf).
+Deliberately NOT extending base.html — this is rendered outside a browser,
+through xhtml2pdf, which only understands a small subset of CSS (no
+flexbox/grid, no Bootstrap, no border-radius, no box-shadow). Keep markup
+to plain tables/divs.
+
+Styled after a reference Zoho-generated Sales Order PDF the company
+already sends customers (clean white layout, logo top-left, plain text
+Bill To/Ship To, dark table header, shaded total row, signature line) —
+not a pixel copy, just the same structural idiom, rebuilt with this app's
+own fields.
+
+Layout note: colored bands/rows are built as single-row <table><td>
+blocks, not stacked sibling <div>s with the same background-color —
+xhtml2pdf paints each block-level sibling as its own frame, which leaves a
+faint white hairline between two adjacent same-color divs. A table cell
+paints its background as one solid rect, so multi-line content that needs
+a continuous colored background goes inside one <td>. Also: a table
+nested inside another table's <td> shrinks to its content width instead
+of filling the cell, so side-by-side boxes (Bill To / Ship To) are one
+flat table with a spacer <td> for the gutter, not nested tables.
+-->
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  @page { size: A4; margin: 1.7cm 1.6cm; }
+  body { font-family: Helvetica, Arial, sans-serif; font-size: 9.5pt; color: #262626; margin: 0; }
+  h2.section { font-size: 10.5pt; color: #16324f; margin: 16px 0 4px 0; }
+
+  /* Header: logo left, doc title right */
+  table.header-row { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
+  table.header-row td { vertical-align: top; padding: 0; }
+  .doc-title { font-size: 22pt; color: #333333; text-align: right; }
+  .doc-subtitle { font-size: 10.5pt; color: #333333; text-align: right; margin-top: 2px; }
+  .status-pill {
+    display: inline; color: #ffffff; font-size: 7.5pt; font-weight: bold;
+    padding: 2px 8px; background-color: {{ status_color }}; margin-top: 5px;
+  }
+  .status-wrap { text-align: right; margin-top: 5px; }
+
+  .co-name { font-weight: bold; font-size: 10.5pt; color: #262626; margin-top: 6px; }
+  .co-detail { color: #4a4a4a; font-size: 9pt; margin-top: 1px; }
+
+  /* Order meta (right-aligned label/value rows) */
+  table.order-meta { border-collapse: collapse; margin-top: 10px; margin-left: auto; width: 300px; }
+  table.order-meta td { padding: 2px 0; font-size: 9pt; }
+  table.order-meta td.m-label { color: #6a6a6a; text-align: right; width: 130px; padding-right: 8px; }
+  table.order-meta td.m-value { color: #262626; font-weight: bold; text-align: right; width: 170px; }
+
+  /* Bill To / Ship To — plain text, no boxes, matching the reference doc */
+  table.parties { width: 100%; border-collapse: collapse; margin-top: 16px; }
+  table.parties td.party-cell { width: 48%; vertical-align: top; font-size: 9pt; }
+  table.parties td.spacer { width: 4%; }
+  .party-label { color: #6a6a6a; font-size: 8pt; font-weight: bold; text-transform: uppercase; margin-bottom: 3px; }
+  .party-name { font-weight: bold; font-size: 10pt; color: #262626; margin-bottom: 2px; }
+
+  .pos-line { font-size: 9pt; color: #4a4a4a; margin-top: 12px; }
+
+  /* Items table */
+  table.items { width: 100%; border-collapse: collapse; margin-top: 14px; }
+  table.items th {
+    background-color: #16324f; color: #ffffff; font-size: 8.5pt;
+    padding: 7px 8px; text-align: left; border: none; font-weight: normal;
+  }
+  table.items td { padding: 8px 8px; font-size: 9.5pt; border-bottom: 1px solid #e6e6e6; vertical-align: top; }
+  .text-end { text-align: right; }
+  .item-name { font-weight: bold; color: #262626; }
+
+  /* Totals */
+  table.totals { width: 45%; margin-left: 55%; border-collapse: collapse; margin-top: 4px; }
+  table.totals td { padding: 6px 8px; font-size: 9.5pt; }
+  table.totals .t-label { color: #4a4a4a; }
+  table.totals .t-value { text-align: right; }
+  table.totals tr.grand td {
+    background-color: #f0f0f0; color: #262626; font-weight: bold; font-size: 10.5pt;
+    padding: 8px; border-top: 1.5px solid #333333;
+  }
+
+  /* Payment schedule */
+  table.terms { width: 100%; border-collapse: collapse; margin-top: 4px; }
+  table.terms th {
+    background-color: #f0f0f0; color: #333333; font-size: 8.5pt;
+    padding: 6px 8px; text-align: left; border-bottom: 1.5px solid #333333; font-weight: bold;
+  }
+  table.terms td { padding: 6px 8px; font-size: 9pt; border-bottom: 1px solid #e6e6e6; }
+  .status-received { color: #198754; font-weight: bold; }
+  .status-pending { color: #a06a00; font-weight: bold; }
+
+  /* Terms & notes */
+  .notes-text { font-size: 8.5pt; color: #4a4a4a; margin-top: 4px; line-height: 1.5; }
+
+  /* Signature */
+  table.signature { width: 100%; border-collapse: collapse; margin-top: 46px; }
+  table.signature td.sig-cell { width: 45%; }
+  .sig-line { border-top: 1px solid #333333; padding-top: 4px; font-size: 8.5pt; color: #4a4a4a; }
+
+  /* Footer */
+  .footer { margin-top: 18px; padding-top: 6px; border-top: 1px solid #e6e6e6; font-size: 7.5pt; color: #a0a0a0; text-align: center; }
+</style>
+</head>
+<body>
+
+<table class="header-row">
+  <tr>
+    <td style="width: 55%;">
+      {% if logo_path %}
+      <img src="{{ logo_path }}" style="width: 170px; height: 52px;" />
+      {% endif %}
+      <div class="co-name">{{ company.name if company else "Logika Systems India Pvt Ltd" }}</div>
+      {% if company and company.address %}
+      <div class="co-detail">{{ company.address|nl2br }}</div>
+      {% endif %}
+      {% if company and company.gstin %}<div class="co-detail">GSTIN {{ company.gstin }}</div>{% endif %}
+    </td>
+    <td style="width: 45%;">
+      <div class="doc-title">SALES ORDER</div>
+      <div class="doc-subtitle">Sales Order# {{ order.order_no }}</div>
+      <div class="status-wrap"><span class="status-pill">{{ order.status|upper }}</span></div>
+      <table class="order-meta">
+        <tr><td class="m-label">Order Date :</td><td class="m-value">{{ order.order_date|dt('%d-%m-%Y') }}</td></tr>
+        {% if order.expected_shipment_date %}
+        <tr><td class="m-label">Expected Shipment Date :</td><td class="m-value">{{ order.expected_shipment_date.strftime('%d-%m-%Y') }}</td></tr>
+        {% endif %}
+        {% if order.customer_po_no %}
+        <tr><td class="m-label">Customer PO No :</td><td class="m-value">{{ order.customer_po_no }}</td></tr>
+        {% endif %}
+        {% if order.customer_po_date %}
+        <tr><td class="m-label">Customer PO Date :</td><td class="m-value">{{ order.customer_po_date.strftime('%d-%m-%Y') }}</td></tr>
+        {% endif %}
+      </table>
+    </td>
+  </tr>
+</table>
+
+<table class="parties">
+  <tr>
+    <td class="party-cell">
+      <div class="party-label">Bill To</div>
+      <div class="party-name">{{ order.customer.name }}</div>
+      {% if order.billing_address %}
+      <div>{{ order.billing_address|nl2br }}</div>
+      {% elif order.customer.address %}
+      <div>{{ order.customer.address|nl2br }}</div>
+      {% endif %}
+      {% if order.customer.gstin %}<div style="margin-top: 2px;">GSTIN {{ order.customer.gstin }}</div>{% endif %}
+    </td>
+    <td class="spacer"></td>
+    <td class="party-cell">
+      <div class="party-label">Ship To</div>
+      {% if order.ship_to_customer %}
+      <div class="party-name">{{ order.ship_to_customer.name }}</div>
+      {% else %}
+      <div class="party-name">{{ order.customer.name }}</div>
+      {% endif %}
+      {% if order.shipping_address %}
+      <div>{{ order.shipping_address|nl2br }}</div>
+      {% elif order.ship_to_customer and order.ship_to_customer.address %}
+      <div>{{ order.ship_to_customer.address|nl2br }}</div>
+      {% elif not order.ship_to_customer and order.customer.address %}
+      <div>{{ order.customer.address|nl2br }}</div>
+      {% endif %}
+      {% if order.ship_to_customer and order.ship_to_customer.gstin %}
+      <div style="margin-top: 2px;">GSTIN {{ order.ship_to_customer.gstin }}</div>
+      {% elif not order.ship_to_customer and order.customer.gstin %}
+      <div style="margin-top: 2px;">GSTIN {{ order.customer.gstin }}</div>
+      {% endif %}
+    </td>
+  </tr>
+</table>
+
+{% set pos_state = (order.ship_to_customer.state if order.ship_to_customer else order.customer.state) %}
+{% if pos_state %}
+<div class="pos-line">Place Of Supply: {{ pos_state }}</div>
+{% endif %}
+
+<table class="items">
+  <thead>
+    <tr>
+      <th style="width: 5%;">#</th>
+      <th style="width: 37%;">Item &amp; Description</th>
+      <th style="width: 12%;">HSN/SAC</th>
+      <th style="width: 12%;" class="text-end">Qty</th>
+      <th style="width: 15%;" class="text-end">Rate</th>
+      <th style="width: 19%;" class="text-end">Amount</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for line in order.items %}
+    <tr>
+      <td>{{ loop.index }}</td>
+      <td class="item-name">{{ line.item.name }}</td>
+      <td>{{ line.item.hsn_code or "-" }}</td>
+      <td class="text-end">{{ line.quantity|qty }}</td>
+      <td class="text-end">{{ line.unit_price|inr }}</td>
+      <td class="text-end">{{ line.total|inr }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<table class="totals">
+  <tr><td class="t-label">Sub Total</td><td class="t-value">{{ order.total_amount|inr }}</td></tr>
+  <tr><td class="t-label">GST</td><td class="t-value">{{ (order.gst_amount or 0)|inr }}</td></tr>
+  <tr class="grand"><td>Total</td><td class="t-value">{{ (order.total_amount + (order.gst_amount or 0))|inr }}</td></tr>
+</table>
+
+{% if order.payment_terms %}
+<h2 class="section">Payment Schedule</h2>
+<table class="terms">
+  <thead>
+    <tr>
+      <th style="width: 30%;">Description</th>
+      <th style="width: 8%;" class="text-end">%</th>
+      <th style="width: 14%;" class="text-end">Amount</th>
+      <th style="width: 16%;">Due Date</th>
+      <th style="width: 17%;">Secured By</th>
+      <th style="width: 15%;">Status</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for t in order.payment_terms %}
+    <tr>
+      <td>{{ t.description }}</td>
+      <td class="text-end">{{ ("%.2f"|format(t.percentage)) if t.percentage is not none else "-" }}</td>
+      <td class="text-end">{{ t.amount|inr }}</td>
+      <td>
+        {% if t.due_date %}{{ t.due_date.strftime('%d-%b-%Y') }}
+        {% elif t.days_after_invoice is not none %}{{ t.days_after_invoice }} days after invoice
+        {% else %}-{% endif %}
+      </td>
+      <td>
+        {% if t.secured_by == 'bank_guarantee' %}Bank Guarantee{% if t.bg_expiry_date %} (exp. {{ t.bg_expiry_date.strftime('%d-%b-%Y') }}){% endif %}
+        {% else %}Cash{% endif %}
+      </td>
+      <td class="{{ 'status-received' if t.status == 'received' else 'status-pending' }}">
+        {{ "Received" + (" " + t.received_date.strftime('%d-%b-%Y') if t.received_date else "") if t.status == 'received' else "Pending" }}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{% if order.notes %}
+<h2 class="section">Terms &amp; Conditions</h2>
+<div class="notes-text">{{ order.notes|nl2br }}</div>
+{% endif %}
+
+<table class="signature">
+  <tr>
+    <td></td>
+    <td class="sig-cell"><div class="sig-line">Authorized Signature</div></td>
+  </tr>
+</table>
+
+<div class="footer">
+  This is a system-generated document &nbsp;·&nbsp; Generated on {{ generated_at|dt('%d-%b-%Y %H:%M') }} IST
+</div>
+
+</body>
+</html>

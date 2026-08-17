@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}{{ order.order_no }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">{{ order.order_no }}</h4>
+  <div>
+    {% if order.status in ('draft', 'ordered', 'cancelled') and perms.edit %}
+    <a href="/purchase/{{ order.id }}/edit" class="btn btn-outline-secondary btn-sm">Edit</a>
+    {% endif %}
+    <span class="badge bg-{{ {'draft':'secondary','ordered':'primary','received':'success','cancelled':'danger'}[order.status] }} fs-6">{{ order.status }}</span>
+  </div>
+</div>
+
+<div class="row mb-3">
+  <div class="col-md-4">
+    <div class="card p-3">
+      <div class="text-muted small">Vendor</div>
+      <div>{{ order.vendor.name }}</div>
+      <div class="text-muted small mt-2">Order Date</div>
+      <div>{{ order.order_date|dt('%d-%b-%Y') }}</div>
+      {% if order.currency != 'INR' %}
+      <div class="text-muted small mt-2">Currency</div>
+      <div>{{ order.currency }} <span class="text-muted small">(ref. rate {{ order.exchange_rate }} / INR)</span></div>
+      {% endif %}
+    </div>
+  </div>
+  <div class="col-md-8">
+    <div class="card p-3">
+      <div class="text-muted small mb-2">Actions</div>
+      {% if not perms.edit %}
+      <span class="text-muted">No further actions.</span>
+      {% elif order.status == 'draft' %}
+      <form method="post" action="/purchase/{{ order.id }}/status" class="d-inline">
+        <input type="hidden" name="new_status" value="ordered">
+        <button class="btn btn-primary btn-sm">Mark Ordered</button>
+      </form>
+      <form method="post" action="/purchase/{{ order.id }}/status" class="d-inline">
+        <input type="hidden" name="new_status" value="cancelled">
+        <button class="btn btn-outline-danger btn-sm">Cancel</button>
+      </form>
+      {% elif order.status == 'ordered' %}
+      <a href="/purchase/{{ order.id }}/receive" class="btn btn-success btn-sm">Receive Order</a>
+      <form method="post" action="/purchase/{{ order.id }}/status" class="d-inline">
+        <input type="hidden" name="new_status" value="cancelled">
+        <button class="btn btn-outline-danger btn-sm">Cancel</button>
+      </form>
+      {% else %}
+      <span class="text-muted">No further actions.</span>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="card p-3">
+  <table class="table table-sm mb-0">
+    <thead><tr><th>Item</th><th class="text-end">Qty</th><th class="text-end">Unit Price</th><th class="text-end">Total</th><th>Serial Numbers</th></tr></thead>
+    <tbody>
+    {% for line in order.items %}
+      <tr>
+        <td>{{ line.item.name }}</td>
+        <td class="text-end">{{ line.quantity|qty }}</td>
+        <td class="text-end">{{ line.unit_price|money(order.currency) }}</td>
+        <td class="text-end">{{ line.total|money(order.currency) }}</td>
+        <td>
+          {% if line.item.has_serial %}
+            {% if line.serials %}
+              <span class="small">{{ line.serials|map(attribute='serial_number')|join(', ') }}</span>
+            {% elif order.status == 'ordered' %}
+              <span class="badge bg-warning text-dark">to be captured on receipt</span>
+            {% else %}
+              <span class="text-muted">-</span>
+            {% endif %}
+          {% else %}
+            <span class="text-muted">-</span>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+    <tfoot>
+      <tr><th colspan="3" class="text-end">Order Total</th><th class="text-end">{{ order.total_amount|money(order.currency) }}</th><th></th></tr>
+    </tfoot>
+  </table>
+</div>
+
+{% if order.notes %}
+<div class="card p-3 mt-3">
+  <div class="text-muted small">Notes</div>
+  <div>{{ order.notes }}</div>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Purchase Orders{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">Purchase Orders</h4>
+  <div>
+    <a href="/purchase/requirements" class="btn btn-outline-primary btn-sm">What to Order</a>
+    {% if perms.add %}
+    <a href="/purchase/new" class="btn btn-dark btn-sm">+ New Purchase Order</a>
+    {% endif %}
+  </div>
+</div>
+<div class="card p-3">
+  <table class="table table-hover align-middle mb-0">
+    <thead><tr><th>Order#</th><th>Vendor</th><th>Date</th><th>Status</th><th class="text-end">Total</th></tr></thead>
+    <tbody>
+    {% for o in orders %}
+      <tr onclick="window.location='/purchase/{{ o.id }}'" style="cursor:pointer;">
+        <td>{{ o.order_no }}</td>
+        <td>{{ o.vendor.name }}</td>
+        <td>{{ o.order_date|dt('%d-%b-%Y') }}</td>
+        <td><span class="badge bg-{{ {'draft':'secondary','ordered':'primary','received':'success','cancelled':'danger'}[o.status] }}">{{ o.status }}</span></td>
+        <td class="text-end">{{ o.total_amount|money(o.currency) }}{% if o.currency != 'INR' %} <span class="text-muted small">{{ o.currency }}</span>{% endif %}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="text-muted text-center">No purchase orders yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}{{ "Edit" if address else "New" }} Address — {{ customer.name }}{% endblock %}
+{% block content %}
+<h4 class="mb-3">{{ "Edit" if address else "New" }} Address — {{ customer.name }}</h4>
+<div class="card p-4" style="max-width: 600px;">
+  <form method="post" action="{{ '/customers/%d/addresses/%d/edit' % (customer.id, address.id) if address else '/customers/%d/addresses/new' % customer.id }}">
+    <div class="mb-3">
+      <label class="form-label">Label</label>
+      <input type="text" name="label" class="form-control" value="{{ address.label if address else '' }}" placeholder="e.g. Head Office, Warehouse - Pune">
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Address *</label>
+      <textarea name="address" class="form-control" rows="3" required>{{ address.address if address else '' }}</textarea>
+    </div>
+    <div class="row">
+      <div class="col-md-4 mb-3">
+        <label class="form-label">City</label>
+        <input type="text" name="city" class="form-control" value="{{ address.city if address else '' }}">
+      </div>
+      <div class="col-md-4 mb-3">
+        <label class="form-label">State</label>
+        <input type="text" name="state" class="form-control" value="{{ address.state if address else '' }}">
+      </div>
+      <div class="col-md-4 mb-3">
+        <label class="form-label">Country</label>
+        <input type="text" name="country" class="form-control" value="{{ address.country if address else '' }}">
+      </div>
+    </div>
+    <div class="mb-3">
+      <label class="form-label">GSTIN</label>
+      <input type="text" name="gstin" class="form-control" value="{{ address.gstin if address else '' }}" placeholder="If different from the customer's main GSTIN">
+    </div>
+    <button type="submit" class="btn btn-dark">Save</button>
+    <a href="/customers/{{ customer.id }}" class="btn btn-link">Cancel</a>
+  </form>
+</div>
+{% endblock %}

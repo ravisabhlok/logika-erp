@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block title %}Items{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <h4 class="mb-0">Items</h4>
+  <div class="d-flex align-items-center gap-2">
+    <input type="text" id="searchBox" class="form-control form-control-sm" style="width:220px;"
+           placeholder="Search items..." oninput="filterRows()">
+
+    {% if all_categories %}
+    <div class="dropdown">
+      <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside">
+        <i class="bi bi-funnel"></i> Filter
+        {% set active_filter_count = selected_categories|length + excluded_categories|length %}
+        {% if active_filter_count %}<span class="badge rounded-pill bg-primary ms-1">{{ active_filter_count }}</span>{% endif %}
+      </button>
+      <div class="dropdown-menu dropdown-menu-end p-3" style="min-width: 280px;">
+        <input type="text" id="catFilterBox" class="form-control form-control-sm mb-2"
+               placeholder="Search categories..." oninput="filterCategoryOptions()" autocomplete="off">
+        <form method="get" action="/items">
+          <div class="small text-muted fw-semibold mb-1">Show only items with (all of)</div>
+          <div class="mb-3 cat-checkbox-group">
+            {% for c in all_categories %}
+              <div class="form-check cat-option" data-cat-name="{{ c.name|lower }}">
+                <input type="checkbox" class="form-check-input" name="category" value="{{ c.name }}" id="cat-{{ c.id }}"
+                       {% if c.name in selected_categories %}checked{% endif %} onchange="this.form.submit()">
+                <label class="form-check-label" for="cat-{{ c.id }}">{{ c.name }}</label>
+              </div>
+            {% endfor %}
+          </div>
+          <div class="small text-muted fw-semibold mb-1">Hide items with (any of)</div>
+          <div class="mb-2 cat-checkbox-group">
+            {% for c in all_categories %}
+              <div class="form-check cat-option" data-cat-name="{{ c.name|lower }}">
+                <input type="checkbox" class="form-check-input" name="exclude_category" value="{{ c.name }}" id="excl-{{ c.id }}"
+                       {% if c.name in excluded_categories %}checked{% endif %} onchange="this.form.submit()">
+                <label class="form-check-label" for="excl-{{ c.id }}">{{ c.name }}</label>
+              </div>
+            {% endfor %}
+          </div>
+          {% if active_filter_count %}
+            <a href="/items" class="small">Clear filters</a>
+          {% endif %}
+        </form>
+      </div>
+    </div>
+    {% endif %}
+
+    {% if perms.add %}
+    <a href="/items/new" class="btn btn-dark btn-sm text-nowrap">+ New Item</a>
+    {% endif %}
+  </div>
+</div>
+
+{% if selected_categories or excluded_categories %}
+<div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+  {% for c in selected_categories %}
+    <a class="filter-tag filter-tag-allow text-decoration-none"
+       href="/items?{% for x in selected_categories %}{% if x != c %}category={{ x|urlencode }}&{% endif %}{% endfor %}{% for x in excluded_categories %}exclude_category={{ x|urlencode }}&{% endfor %}">
+      {{ c }} <i class="bi bi-x"></i>
+    </a>
+  {% endfor %}
+  {% for c in excluded_categories %}
+    <a class="filter-tag filter-tag-deny text-decoration-none"
+       href="/items?{% for x in selected_categories %}category={{ x|urlencode }}&{% endfor %}{% for x in excluded_categories %}{% if x != c %}exclude_category={{ x|urlencode }}&{% endif %}{% endfor %}">
+      not: {{ c }} <i class="bi bi-x"></i>
+    </a>
+  {% endfor %}
+  <a href="/items" class="small text-muted text-decoration-none ms-1">Clear all</a>
+</div>
+{% endif %}
+
+<div class="card p-3">
+  <table class="table table-hover align-middle mb-0" id="itemsTable">
+    <thead><tr><th>Name</th><th>Categories</th><th>Unit</th><th>Purchase Price</th><th>Sales Price</th><th>Stock</th><th>Reorder At</th></tr></thead>
+    <tbody>
+    {% for i in items %}
+      <tr class="{{ 'table-warning' if i.current_stock <= i.reorder_level else '' }}"
+          data-search="{{ (i.name ~ ' ' ~ (i.small_description or '') ~ ' ' ~ (i.description or ''))|lower }}">
+        <td>
+          <a href="/items/{{ i.id }}" class="text-decoration-none fw-semibold">{{ i.name }}</a>
+          {% if i.has_serial %} <span class="badge bg-info text-dark">serialized</span>{% endif %}
+          {% if i.is_assembly %} <span class="badge bg-primary">assembled</span>{% endif %}
+          {% if not i.is_active %} <span class="badge bg-secondary">inactive</span>{% endif %}
+          {% if i.small_description %}<div class="text-muted small">{{ i.small_description }}</div>{% endif %}
+        </td>
+        <td>
+          {% for c in i.categories %}<span class="badge bg-light text-dark border">{{ c.name }}</span>{% else %}<span class="text-muted">-</span>{% endfor %}
+        </td>
+        <td>{{ i.unit }}</td>
+        <td>{{ i.purchase_price|inr }}</td>
+        <td>{{ i.sales_price|inr }}</td>
+        <td class="{{ 'low-stock' if i.current_stock <= i.reorder_level else '' }}">{{ i.current_stock|qty }}</td>
+        <td>{{ i.reorder_level|qty }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="7" class="text-muted text-center">No items match.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="text-muted text-center mt-2 mb-0" id="noSearchResults" style="display:none;">No items match your search.</p>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  function filterCategoryOptions() {
+    const q = document.getElementById('catFilterBox').value.trim().toLowerCase();
+    document.querySelectorAll('.cat-option').forEach(opt => {
+      opt.style.display = (!q || opt.dataset.catName.includes(q)) ? '' : 'none';
+    });
+  }
+
+  function filterRows() {
+    const q = document.getElementById('searchBox').value.trim().toLowerCase();
+    const rows = document.querySelectorAll('#itemsTable tbody tr[data-search]');
+    let visibleCount = 0;
+    rows.forEach(row => {
+      const match = !q || row.dataset.search.includes(q);
+      row.style.display = match ? '' : 'none';
+      if (match) visibleCount++;
+    });
+    document.getElementById('noSearchResults').style.display = (q && visibleCount === 0) ? 'block' : 'none';
+  }
+</script>
+{% endblock %}

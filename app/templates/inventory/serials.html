@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Serial Numbers - {{ item.name }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <div>
+    <h4 class="mb-0">Serial Numbers: {{ item.name }}</h4>
+    <span class="text-muted">
+      Current Stock: {{ item.current_stock|qty }} &middot; Recorded: {{ serials|length }}
+      {% if remaining_to_serialize %}&middot; <span class="text-danger">{{ remaining_to_serialize|qty }} unit(s) still need one</span>{% endif %}
+    </span>
+  </div>
+  {% if item.has_serial and perms.add %}
+  <a href="/inventory/{{ item.id }}/serials/add" class="btn btn-dark btn-sm">+ Add Serial Numbers</a>
+  {% endif %}
+</div>
+
+{% if not item.has_serial %}
+<p class="text-muted">This item is not serial-tracked. Turn on "This item has serial numbers" on the <a href="/items/{{ item.id }}/edit">item's Edit page</a> to start recording serial numbers.</p>
+{% elif serials %}
+<div class="card p-3">
+  <table class="table table-sm mb-0">
+    <thead><tr><th>Serial Number</th><th>Received</th><th>Purchase Order</th><th></th></tr></thead>
+    <tbody>
+    {% for s in serials %}
+      <tr>
+        <td>{{ s.serial_number }}</td>
+        <td>{{ s.received_at|dt('%d-%b-%Y') }}</td>
+        <td>{% if s.purchase_order %}<a href="/purchase/{{ s.purchase_order.id }}">{{ s.purchase_order.order_no }}</a>{% else %}-{% endif %}</td>
+        <td class="text-end">
+          {% if perms.edit %}<a href="/inventory/{{ item.id }}/serials/{{ s.id }}/edit" class="btn btn-outline-secondary btn-sm">Edit</a>{% endif %}
+          {% if perms.delete %}
+          <form method="post" action="/inventory/{{ item.id }}/serials/{{ s.id }}/delete" class="d-inline" onsubmit="return confirm('Delete serial number {{ s.serial_number }}?');">
+            <button type="submit" class="btn btn-outline-danger btn-sm">Delete</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="text-muted">No serial numbers recorded yet.</p>
+{% endif %}
+
+<a href="/inventory/{{ item.id }}/ledger" class="btn btn-link mt-3">Back to Ledger</a>
+{% endblock %}

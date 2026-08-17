@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Roles{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">Roles</h4>
+  <a href="/roles/new" class="btn btn-dark btn-sm">+ New Role</a>
+</div>
+
+<div class="card p-3">
+  <table class="table table-hover align-middle mb-0">
+    <thead><tr><th>Name</th><th>Modules with access</th><th style="width:160px;"></th></tr></thead>
+    <tbody>
+    {% for r in roles %}
+      <tr>
+        <td class="fw-semibold">{{ r.name }}</td>
+        <td>
+          {% for p in r.permissions %}
+            <span class="badge bg-light text-dark border">{{ p.module }}</span>
+          {% else %}
+            <span class="text-muted">No permissions set</span>
+          {% endfor %}
+        </td>
+        <td class="text-end">
+          <a href="/roles/{{ r.id }}/edit" class="btn btn-outline-secondary btn-sm">Edit</a>
+          <form method="post" action="/roles/{{ r.id }}/delete" class="d-inline" onsubmit="return confirm('Delete this role?');">
+            <button class="btn btn-outline-danger btn-sm">Delete</button>
+          </form>
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="3" class="text-muted text-center">No roles yet. Create one, then assign it to staff users from Users.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+<a href="/users" class="btn btn-link mt-2">Manage Users</a>
+{% endblock %}

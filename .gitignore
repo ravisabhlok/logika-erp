@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.env
+.venv/
+venv/
+*.log
+
+# Uploaded item attachments (pictures/PDFs) — files live on disk only,
+# metadata is in the DB. Don't commit user-uploaded content.
+app/static/uploads/*
+!app/static/uploads/.gitkeep
+
+# Database backups produced by scripts/backup_db.py — contain live
+# customer/financial data, keep them off of git entirely.
+backups/

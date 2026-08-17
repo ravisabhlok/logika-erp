@@ -1,0 +1,379 @@
+{% extends "base.html" %}
+{% block title %}{{ "Edit" if order else "New" }} Sales Order{% endblock %}
+{% block content %}
+<h4 class="mb-3">{{ "Edit " ~ order.order_no if order else "New Sales Order" }}</h4>
+<div class="card p-4">
+  {% if errors.order_no %}
+  <div class="alert alert-danger py-2">{{ errors.order_no }}</div>
+  {% endif %}
+  <form method="post" action="{{ '/sales/%d/edit' % order.id if order else '/sales/new' }}" id="salesOrderForm">
+    <div class="row">
+      <div class="col-md-6 mb-3">
+        <label class="form-label">Customer *</label>
+        <select name="customer_id" id="customer-select" class="form-select" required style="width:100%;">
+          <option value="">-- select customer --</option>
+          {% for c in customers %}
+          <option value="{{ c.id }}" {% if submitted.customer_id == c.id %}selected{% endif %}
+            data-address="{{ c.address or '' }}" data-city="{{ c.city or '' }}" data-state="{{ c.state or '' }}"
+            data-country="{{ c.country or '' }}" data-gstin="{{ c.gstin or '' }}">{{ c.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-6 mb-3">
+        <label class="form-label">Order No</label>
+        <input type="text" name="order_no" class="form-control {{ 'is-invalid' if errors.order_no else '' }}"
+               value="{{ submitted.order_no or '' }}" placeholder="Leave blank to auto-generate">
+        {% if order %}
+        <div class="form-text">Change the number if you need it to match Zoho or another system.</div>
+        {% else %}
+        <div class="form-text">Optional — paste the number from Zoho to keep it in sync, or leave blank for an auto-generated SO-##### number.</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="col-md-4 mb-3">
+        <label class="form-label">Customer PO No</label>
+        <input type="text" name="customer_po_no" class="form-control" value="{{ submitted.customer_po_no or '' }}" placeholder="Customer's own PO reference">
+      </div>
+      <div class="col-md-4 mb-3">
+        <label class="form-label">Customer PO Date</label>
+        <input type="date" name="customer_po_date" class="form-control" value="{{ submitted.customer_po_date or '' }}">
+      </div>
+      <div class="col-md-4 mb-3">
+        <label class="form-label">Expected Shipment Date</label>
+        <input type="date" name="expected_shipment_date" class="form-control" value="{{ submitted.expected_shipment_date or '' }}">
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="col-md-6 mb-3">
+        <label class="form-label">Bill To</label>
+        <select id="billToAddressSelect" class="form-select form-select-sm mb-2" style="width:100%;"></select>
+        <textarea name="billing_address" id="billingAddressText" class="form-control" rows="3" placeholder="Pick an address above, or type one">{{ submitted.billing_address or '' }}</textarea>
+      </div>
+      <div class="col-md-6 mb-3">
+        <label class="form-label d-flex justify-content-between align-items-center">
+          <span>Ship To</span>
+          <span class="form-check form-check-inline mb-0">
+            <input type="checkbox" class="form-check-input" id="shipToDifferentCheckbox" {% if submitted.ship_to_customer_id %}checked{% endif %}>
+            <label class="form-check-label small" for="shipToDifferentCheckbox">Different customer</label>
+          </span>
+        </label>
+        <select name="ship_to_customer_id" id="ship-to-customer-select" class="form-select mb-2" style="width:100%; display:none;">
+          <option value="">-- select customer --</option>
+          {% for c in customers %}
+          <option value="{{ c.id }}" {% if submitted.ship_to_customer_id == c.id %}selected{% endif %}
+            data-address="{{ c.address or '' }}" data-city="{{ c.city or '' }}" data-state="{{ c.state or '' }}"
+            data-country="{{ c.country or '' }}" data-gstin="{{ c.gstin or '' }}">{{ c.name }}</option>
+          {% endfor %}
+        </select>
+        <select id="shipToAddressSelect" class="form-select form-select-sm mb-2" style="width:100%;"></select>
+        <textarea name="shipping_address" id="shippingAddressText" class="form-control" rows="3" placeholder="Pick an address above, or type one">{{ submitted.shipping_address or '' }}</textarea>
+      </div>
+    </div>
+
+    <table class="table table-sm" id="lineTable">
+      <thead><tr><th>Item</th><th style="width:120px;">Qty</th><th style="width:120px;">Price</th><th style="width:120px;">Line Total</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <button type="button" class="btn btn-outline-secondary btn-sm mb-3" onclick="addRow()">+ Add Line</button>
+
+    <div id="suggestionsBox" class="mb-3" style="display:none;">
+      <div class="text-muted small mb-1">Frequently ordered with these items:</div>
+      <div id="suggestionsList" class="d-flex flex-wrap gap-2"></div>
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label">Notes</label>
+      <textarea name="notes" class="form-control" rows="2">{{ submitted.notes or '' }}</textarea>
+    </div>
+
+    <div class="mb-3">
+      <div>Subtotal: <span id="orderSubtotal">0.00</span></div>
+      <div>GST: <span id="orderGst">0.00</span></div>
+      <div class="fw-bold">Invoice Value: <span id="orderGrandTotal">0.00</span></div>
+    </div>
+
+    <button type="submit" class="btn btn-dark">{{ "Save Changes" if order else "Create Sales Order" }}</button>
+    <a href="{{ '/sales/%d' % order.id if order else '/sales' }}" class="btn btn-link">Cancel</a>
+  </form>
+</div>
+{% if order %}
+<div class="form-text mt-2">Payment Schedule is managed separately — see the order page.</div>
+{% else %}
+<div class="form-text mt-2">Payment Schedule can be set up once the order's saved — you'll land on the order page next.</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// The form has several plain <input> fields (Order No, Qty, Price) where
+// hitting Enter would normally submit the form via the browser's default
+// "implicit submit" behavior — easy to trigger by accident while tabbing
+// through line items. Only an explicit click (or keyboard activation) of
+// the Save button should submit; Enter is swallowed everywhere else. The
+// Notes textarea is exempted since Enter there should just add a newline
+// (browsers already do this, but it's excluded here too for clarity).
+document.getElementById('salesOrderForm').addEventListener('keydown', function (e) {
+  if (e.key === 'Enter' && e.target.tagName !== 'TEXTAREA' && e.target.type !== 'submit') {
+    e.preventDefault();
+  }
+});
+
+$('#customer-select').select2({
+  theme: 'bootstrap',
+  placeholder: '-- select customer --',
+  width: '100%',
+});
+$('#ship-to-customer-select').select2({
+  theme: 'bootstrap',
+  placeholder: '-- select customer --',
+  width: '100%',
+  dropdownParent: $('#ship-to-customer-select').closest('.card'),
+});
+
+// --- Bill To / Ship To --------------------------------------------------
+// Builds a display string from an address-like object (a CustomerAddress
+// row, or the synthetic "Main Address" built from the Customer's own base
+// fields) for filling into the Bill To / Ship To textarea.
+function formatAddress(a) {
+  const lines = [];
+  if (a.address) lines.push(a.address);
+  const cityLine = [a.city, a.state, a.country].filter(Boolean).join(', ');
+  if (cityLine) lines.push(cityLine);
+  if (a.gstin) lines.push('GSTIN: ' + a.gstin);
+  return lines.join('\n');
+}
+
+function mainAddressFromOption(optionEl) {
+  return {
+    label: 'Main Address', address: optionEl.dataset.address || '', city: optionEl.dataset.city || '',
+    state: optionEl.dataset.state || '', country: optionEl.dataset.country || '', gstin: optionEl.dataset.gstin || '',
+  };
+}
+
+// Populates an address <select> — the customer's own "Main Address" plus
+// any saved CustomerAddress rows — and wires it so picking one fills the
+// paired textarea (which stays freely editable afterward, same "computed
+// default, editable after" pattern used elsewhere on this form). Only
+// overwrites the textarea's current content when `autoFill` is true —
+// false is used when first building the dropdown for whatever customer is
+// already selected on page load, so an existing saved/typed address isn't
+// silently replaced; true is used when the customer selection actively
+// changes, since the old text is now for the wrong customer anyway.
+function populateAddressPicker(customerId, selectEl, textareaEl, customerSelectId, autoFill) {
+  if (!customerId) {
+    selectEl.innerHTML = '<option value="">-- select a customer first --</option>';
+    return;
+  }
+  const optionEl = document.querySelector(`#${customerSelectId} option[value="${customerId}"]`);
+  const main = optionEl ? mainAddressFromOption(optionEl) : null;
+
+  fetch('/customers/' + customerId + '/addresses')
+    .then(r => r.json())
+    .then(saved => {
+      const options = [];
+      if (main && (main.address || main.city)) options.push(main);
+      saved.forEach(a => options.push(a));
+      options.push({ label: '-- type custom address --', address: '', city: '', state: '', country: '', gstin: '', custom: true });
+
+      selectEl.innerHTML = options.map((a, idx) => `<option value="${idx}">${a.label || 'Address ' + (idx + 1)}</option>`).join('');
+      selectEl.dataset.options = JSON.stringify(options);
+      selectEl.onchange = () => {
+        const opts = JSON.parse(selectEl.dataset.options);
+        const picked = opts[parseInt(selectEl.value, 10)];
+        if (picked && !picked.custom) textareaEl.value = formatAddress(picked);
+      };
+      if (autoFill && options.length) {
+        selectEl.value = 0;
+        selectEl.onchange();
+      }
+    })
+    .catch(() => {
+      selectEl.innerHTML = '<option value="">-- could not load addresses --</option>';
+    });
+}
+
+function refreshBillTo(autoFill) {
+  populateAddressPicker(
+    document.getElementById('customer-select').value,
+    document.getElementById('billToAddressSelect'), document.getElementById('billingAddressText'),
+    'customer-select', autoFill,
+  );
+}
+
+function refreshShipTo(autoFill) {
+  const different = document.getElementById('shipToDifferentCheckbox').checked;
+  const customerId = different
+    ? document.getElementById('ship-to-customer-select').value
+    : document.getElementById('customer-select').value;
+  const sourceSelectId = different ? 'ship-to-customer-select' : 'customer-select';
+  populateAddressPicker(
+    customerId, document.getElementById('shipToAddressSelect'), document.getElementById('shippingAddressText'),
+    sourceSelectId, autoFill,
+  );
+}
+
+$('#customer-select').on('change', function () {
+  refreshBillTo(true);
+  if (!document.getElementById('shipToDifferentCheckbox').checked) refreshShipTo(true);
+});
+$('#ship-to-customer-select').on('change', function () { refreshShipTo(true); });
+document.getElementById('shipToDifferentCheckbox').addEventListener('change', function () {
+  const shipToSelect = document.getElementById('ship-to-customer-select');
+  shipToSelect.style.display = this.checked ? '' : 'none';
+  if (!this.checked) {
+    // Clear it so a stale selection never gets submitted while unchecked —
+    // this also re-triggers refreshShipTo() via the select's own change handler.
+    $(shipToSelect).val('').trigger('change');
+  } else {
+    refreshShipTo(true);
+  }
+});
+
+// Initial page load: build the dropdowns for whatever's already selected
+// (an existing order's customer, or a validation-error resubmit) without
+// overwriting the textareas — those are already pre-filled server-side
+// from submitted.billing_address / submitted.shipping_address.
+if (document.getElementById('shipToDifferentCheckbox').checked) {
+  document.getElementById('ship-to-customer-select').style.display = '';
+}
+refreshBillTo(false);
+refreshShipTo(false);
+
+const items = [
+  {% for i in items %}{ id: {{ i.id }}, name: {{ i.name|tojson }}, price: {{ i.sales_price|float }}, stock: {{ i.current_stock|float }}, gst: {{ (i.gst_percentage or 0)|float }} },{% endfor %}
+];
+const submittedLines = [
+  {% for l in submitted.lines %}{ item_id: {{ l.item_id }}, quantity: {{ l.quantity|tojson }}, unit_price: {{ l.unit_price|tojson }} },{% endfor %}
+];
+
+function addRow(selectedId, qty, price) {
+  const tbody = document.querySelector('#lineTable tbody');
+  const row = document.createElement('tr');
+  const options = items.map(i => `<option value="${i.id}" ${selectedId == i.id ? 'selected' : ''} data-price="${i.price}">${i.name} (stock: ${i.stock})</option>`).join('');
+  // If a price wasn't explicitly passed in (e.g. clicking a "frequently
+  // ordered with" suggestion, which only passes an item id) but an item was
+  // preselected, default the price field to that item's own list price —
+  // same as what onItemChange does when picked manually from the dropdown.
+  const preselected = items.find(i => i.id == selectedId);
+  const initialPrice = price != null ? price : (preselected ? preselected.price.toFixed(2) : '0.00');
+  row.innerHTML = `
+    <td><select name="item_id" class="form-select form-select-sm item-select" style="width:100%;" onchange="onItemChange(this)"><option value="">-- item --</option>${options}</select></td>
+    <td><input type="number" name="quantity" class="form-control form-control-sm qty-input" min="0.0001" step="any" value="${qty || 1}" oninput="recalcRow(this)"></td>
+    <td><input type="number" name="unit_price" class="form-control form-control-sm price-input" min="0" step="any" value="${initialPrice}" oninput="recalcRow(this)"></td>
+    <td><span class="line-total">0.00</span></td>
+    <td><button type="button" class="btn btn-sm btn-outline-danger" onclick="$(this).closest('tr').remove(); recalcTotal(); refreshSuggestions();">x</button></td>
+  `;
+  tbody.appendChild(row);
+  $(row).find('.item-select').select2({
+    theme: 'bootstrap',
+    placeholder: '-- item --',
+    width: '100%',
+    dropdownParent: $(row).closest('.card'),
+  });
+  if (selectedId) recalcRow(row.querySelector('.qty-input'));
+}
+
+// Fired when the item itself changes: fills in that item's list price as a
+// starting point (only the price field, editable afterward) and recalculates.
+function onItemChange(select) {
+  const row = select.closest('tr');
+  const price = parseFloat(select.selectedOptions[0]?.dataset.price || 0);
+  row.querySelector('.price-input').value = price.toFixed(2);
+  recalcRow(select);
+  refreshSuggestions();
+}
+
+// "Frequently ordered with these items" — pulls from /sales/item-suggestions,
+// which looks at past sales orders for items that showed up alongside
+// whatever's currently on this order, and shows the top few as quick-add
+// buttons. Purely a nudge, not a requirement — nothing stops adding anything
+// else. Refreshed whenever the item selection on any line changes.
+function currentItemIds() {
+  return Array.from(document.querySelectorAll('.item-select'))
+    .map(select => select.value)
+    .filter(v => v);
+}
+
+function refreshSuggestions() {
+  const ids = currentItemIds();
+  const box = document.getElementById('suggestionsBox');
+  const list = document.getElementById('suggestionsList');
+  if (!ids.length) {
+    box.style.display = 'none';
+    list.innerHTML = '';
+    return;
+  }
+  fetch('/sales/item-suggestions?item_ids=' + ids.join(','))
+    .then(r => r.json())
+    .then(suggestions => {
+      if (!suggestions.length) {
+        box.style.display = 'none';
+        list.innerHTML = '';
+        return;
+      }
+      list.innerHTML = suggestions.map(s => `
+        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="addSuggested(${s.id})">
+          <i class="bi bi-plus-circle"></i> ${s.name} <span class="text-muted">(stock: ${s.stock})</span>
+        </button>
+      `).join('');
+      box.style.display = 'block';
+    })
+    .catch(() => {
+      // Suggestions are a nice-to-have — fail silently rather than
+      // interrupting order entry if the request errors out.
+      box.style.display = 'none';
+    });
+}
+
+function addSuggested(itemId) {
+  addRow(itemId, 1);
+  refreshSuggestions();
+}
+
+// Fired on qty/price edits: just recomputes the line total from whatever is
+// currently in the qty and price fields, without touching either value.
+function recalcRow(el) {
+  const row = el.closest('tr');
+  const qty = parseFloat(row.querySelector('.qty-input').value) || 0;
+  const price = parseFloat(row.querySelector('.price-input').value) || 0;
+  const lineTotal = price * qty;
+  const lineTotalEl = row.querySelector('.line-total');
+  // data-value keeps the raw number for recalcTotal() to sum; textContent
+  // holds the Indian-formatted display string, which parseFloat() can't
+  // read back (it stops at the first comma).
+  lineTotalEl.dataset.value = lineTotal;
+  lineTotalEl.textContent = formatINR(lineTotal);
+  recalcTotal();
+}
+
+// GST isn't shown per line (each item can carry its own rate, but the form
+// only surfaces the blended result) — this reads each row's selected item
+// to look up its rate and folds it into the running GST total alongside
+// the plain subtotal. See SalesOrder.gst_amount's comment for why this is
+// computed fresh from each item's *current* rate rather than a stored
+// per-line snapshot.
+function recalcTotal() {
+  let subtotal = 0, gstTotal = 0;
+  document.querySelectorAll('#lineTable tbody tr').forEach(row => {
+    const lineTotal = parseFloat(row.querySelector('.line-total').dataset.value) || 0;
+    subtotal += lineTotal;
+    const itemId = row.querySelector('.item-select').value;
+    const item = items.find(i => i.id == itemId);
+    if (item) gstTotal += lineTotal * item.gst / 100;
+  });
+  document.getElementById('orderSubtotal').textContent = formatINR(subtotal);
+  document.getElementById('orderGst').textContent = formatINR(gstTotal);
+  document.getElementById('orderGrandTotal').textContent = formatINR(subtotal + gstTotal);
+}
+
+if (submittedLines.length) {
+  submittedLines.forEach(l => addRow(l.item_id, l.quantity, l.unit_price));
+} else {
+  addRow();
+}
+refreshSuggestions();
+</script>
+{% endblock %}

@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Logika ERP{% endblock %} - Logika Systems India Pvt Ltd</title>
+
+    <!-- Applied before first paint so the sidebar never flashes expanded then collapses. -->
+    <script>
+        if (localStorage.getItem('sidebarCollapsed') === '1') {
+            document.documentElement.classList.add('sidebar-collapsed');
+        }
+    </script>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/select2/4.1.0-rc.0/css/select2.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/select2-bootstrap-theme/0.1.0-beta.10/select2-bootstrap.min.css" rel="stylesheet">
+    <link href="/static/custom.css" rel="stylesheet">
+</head>
+<body>
+
+{% if user %}
+<div class="app-shell">
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-brand">
+      <a href="/" class="brand-link">
+        <span class="brand-mark">L</span>
+        <span class="brand-name">Logika ERP</span>
+      </a>
+      <button class="sidebar-toggle" id="sidebarToggle" type="button" aria-label="Collapse sidebar">
+        <i class="bi bi-chevron-left"></i>
+      </button>
+    </div>
+
+    <nav class="sidebar-nav">
+      <a href="/" class="nav-item {{ 'active' if request.url.path == '/' else '' }}">
+        <i class="bi bi-speedometer2"></i><span>Dashboard</span>
+      </a>
+      <a href="/customers" class="nav-item {{ 'active' if request.url.path.startswith('/customers') else '' }}">
+        <i class="bi bi-people"></i><span>Customers</span>
+      </a>
+      <a href="/vendors" class="nav-item {{ 'active' if request.url.path.startswith('/vendors') else '' }}">
+        <i class="bi bi-truck"></i><span>Vendors</span>
+      </a>
+      <a href="/items" class="nav-item {{ 'active' if request.url.path.startswith('/items') else '' }}">
+        <i class="bi bi-box-seam"></i><span>Items</span>
+      </a>
+      <a href="/sales" class="nav-item {{ 'active' if request.url.path.startswith('/sales') and not request.url.path.startswith('/sales/payments-due') else '' }}">
+        <i class="bi bi-cart-check"></i><span>Sales</span>
+      </a>
+      <a href="/sales/payments-due" class="nav-item {{ 'active' if request.url.path.startswith('/sales/payments-due') else '' }}">
+        <i class="bi bi-cash-coin"></i><span>Payments Due</span>
+      </a>
+      <a href="/purchase" class="nav-item {{ 'active' if request.url.path.startswith('/purchase') and not request.url.path.startswith('/purchase/requirements') else '' }}">
+        <i class="bi bi-bag-check"></i><span>Purchase</span>
+      </a>
+      <a href="/purchase/requirements" class="nav-item {{ 'active' if request.url.path.startswith('/purchase/requirements') else '' }}">
+        <i class="bi bi-clipboard-check"></i><span>What to Order</span>
+      </a>
+      <a href="/production" class="nav-item {{ 'active' if request.url.path.startswith('/production') else '' }}">
+        <i class="bi bi-gear-wide-connected"></i><span>Production</span>
+      </a>
+      <a href="/inventory" class="nav-item {{ 'active' if request.url.path.startswith('/inventory') else '' }}">
+        <i class="bi bi-clipboard-data"></i><span>Inventory</span>
+      </a>
+      {% if user.role == 'admin' %}
+      <a href="/users" class="nav-item {{ 'active' if request.url.path.startswith('/users') or request.url.path.startswith('/roles') else '' }}">
+        <i class="bi bi-shield-lock"></i><span>Roles &amp; Users</span>
+      </a>
+      {% endif %}
+    </nav>
+
+    <div class="sidebar-footer">
+      <a href="/account" class="nav-item {{ 'active' if request.url.path.startswith('/account') else '' }}" title="{{ user.full_name or user.username }}">
+        <i class="bi bi-person-circle"></i><span>{{ user.full_name or user.username }}</span>
+      </a>
+      <a href="/logout" class="nav-item logout-item" title="Logout">
+        <i class="bi bi-box-arrow-right"></i><span>Logout</span>
+      </a>
+    </div>
+  </aside>
+
+  <div class="main-area">
+{% else %}
+<div class="auth-shell">
+{% endif %}
+    <div class="content-wrap">
+      {% if request.query_params.get('error') %}
+      <div class="alert alert-danger">{{ request.query_params.get('error') }}</div>
+      {% endif %}
+      {% if request.query_params.get('success') %}
+      <div class="alert alert-success">{{ request.query_params.get('success') }}</div>
+      {% endif %}
+
+      {% block content %}{% endblock %}
+    </div>
+    <footer class="app-footer">
+      Logika Systems India Pvt Ltd &middot; Internal ERP
+    </footer>
+{% if user %}
+  </div>
+</div>
+{% else %}
+</div>
+{% endif %}
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/select2/4.1.0-rc.0/js/select2.min.js"></script>
+<script>
+  const sidebarToggle = document.getElementById('sidebarToggle');
+  if (sidebarToggle) {
+    sidebarToggle.addEventListener('click', function () {
+      const collapsed = document.documentElement.classList.toggle('sidebar-collapsed');
+      localStorage.setItem('sidebarCollapsed', collapsed ? '1' : '0');
+    });
+  }
+
+  // Indian-style currency formatting (lakh/crore comma grouping, 2 decimals —
+  // e.g. 100000 -> "1,00,000.00"), mirroring app/formatting.py:format_inr.
+  // Display only: apply to read-only spans/text, never to the .value of an
+  // <input type="number"> (browsers reject comma-formatted numeric input).
+  function formatINR(value) {
+    const num = Number(value) || 0;
+    const negative = num < 0;
+    const fixed = Math.abs(num).toFixed(2);
+    const [intPart, decPart] = fixed.split('.');
+    let formatted;
+    if (intPart.length <= 3) {
+      formatted = intPart;
+    } else {
+      const last3 = intPart.slice(-3);
+      let rest = intPart.slice(0, -3);
+      const groups = [];
+      while (rest.length > 2) {
+        groups.unshift(rest.slice(-2));
+        rest = rest.slice(0, -2);
+      }
+      if (rest) groups.unshift(rest);
+      formatted = groups.join(',') + ',' + last3;
+    }
+    return (negative ? '-' : '') + formatted + '.' + decPart;
+  }
+
+  // Currency-aware version of the above, mirroring
+  // app/formatting.py:format_money. INR keeps the lakh/crore grouping via
+  // formatINR; any other currency uses plain international 3-digit
+  // grouping with that currency's symbol (falls back to the 3-letter code
+  // if not in the map below). Used on Purchase Order screens, which are
+  // the only place a non-INR amount can appear right now — see
+  // PurchaseOrder.currency in models.py.
+  const CURRENCY_SYMBOLS = {INR: 'Rs.', USD: '$', EUR: '€', GBP: '£', CAD: 'CA$', AED: 'AED ', SGD: 'S$'};
+  function formatMoney(value, currency) {
+    currency = (currency || 'INR').toUpperCase();
+    if (currency === 'INR') return formatINR(value);
+    const symbol = CURRENCY_SYMBOLS[currency] || (currency + ' ');
+    const num = Number(value) || 0;
+    const negative = num < 0;
+    const formatted = Math.abs(num).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    return (negative ? '-' : '') + symbol + formatted;
+  }
+</script>
+{% block extra_js %}{% endblock %}
+</body>
+</html>

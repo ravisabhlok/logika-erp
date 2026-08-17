@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}Payments Due{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">Payments Due</h4>
+  <div class="fw-bold">Total Pending: <span id="totalPendingAmount" data-value="{{ total_due }}">{{ total_due|inr }}</span></div>
+</div>
+
+<p class="text-muted small">
+  Every pending payment milestone across confirmed and delivered sales
+  orders, earliest due date first. Rows with no due date yet (e.g. a
+  retention due "after warranty" on an order not yet delivered) sort to the
+  bottom rather than disappearing — they're still owed, just not dated.
+  Draft orders aren't counted since they aren't a firm commitment yet.
+</p>
+
+<div class="card p-3" id="payments-due-table">
+  {% if rows %}
+  <table class="table table-sm mb-0">
+    <thead>
+      <tr>
+        <th>Customer</th>
+        <th>Order#</th>
+        <th>Description</th>
+        <th class="text-end">Amount</th>
+        <th>Due Date</th>
+        <th>Secured By</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody id="paymentsDueBody">
+    {% set today = now().date() %}
+    {% for r in rows %}
+      <tr class="{{ 'table-danger' if r.overdue else '' }}" data-amount="{{ r.term.amount|float }}">
+        <td>{{ r.order.customer.name }}</td>
+        <td><a href="/sales/{{ r.order.id }}">{{ r.order.order_no }}</a></td>
+        <td>{{ r.term.description }}</td>
+        <td class="text-end fw-semibold">{{ r.term.amount|inr }}</td>
+        <td>
+          {% if r.term.due_date %}
+          {{ r.term.due_date.strftime('%d-%b-%Y') }}{% if r.overdue %} <span class="badge bg-danger">Overdue</span>{% endif %}
+          {% elif r.term.days_after_invoice is not none %}
+          <span class="text-muted">{{ r.term.days_after_invoice }} days after invoice — date pending</span>
+          {% else %}
+          <span class="text-muted">—</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if r.term.secured_by == 'bank_guarantee' %}
+          Bank Guarantee{% if r.term.bg_expiry_date %} <span class="text-muted small">(expires {{ r.term.bg_expiry_date.strftime('%d-%b-%Y') }})</span>{% endif %}
+          {% else %}
+          Cash
+          {% endif %}
+        </td>
+        <td>
+          {% if perms.edit %}
+          <form method="post" action="/sales/{{ r.order.id }}/payment-terms/{{ r.term.id }}/status" class="d-inline-flex align-items-center gap-1 payment-term-status-form">
+            <input type="hidden" name="return_to" value="/sales/payments-due#payments-due-table">
+            <input type="hidden" name="new_status" value="received">
+            <input type="date" name="received_date" class="form-control form-control-sm" style="width:140px;" value="{{ today.isoformat() }}" required>
+            <button class="btn btn-outline-success btn-sm">Mark Received</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="text-muted mb-0">Nothing pending — every payment milestone on your confirmed/delivered orders is either received or hasn't been set up yet.</p>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Mark Received updates in place via fetch — no page navigation, so the
+// person doesn't lose their scroll position on a long list. Unlike the
+// order detail page, a term marked received here just disappears (this
+// page only ever lists *pending* terms), and the Total Pending figure
+// drops by that term's amount.
+(function () {
+  const tbody = document.getElementById('paymentsDueBody');
+  if (!tbody) return;
+  const totalEl = document.getElementById('totalPendingAmount');
+  const card = document.getElementById('payments-due-table');
+
+  tbody.addEventListener('submit', function (e) {
+    const form = e.target.closest('.payment-term-status-form');
+    if (!form) return;
+    e.preventDefault();
+
+    const row = form.closest('tr');
+    const submitBtn = form.querySelector('button');
+    submitBtn.disabled = true;
+
+    fetch(form.action, {
+      method: 'POST',
+      headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      body: new FormData(form),
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (!data.ok) { submitBtn.disabled = false; return; }
+
+        const rowAmount = parseFloat(row.dataset.amount) || 0;
+        const newTotal = (parseFloat(totalEl.dataset.value) || 0) - rowAmount;
+        totalEl.dataset.value = newTotal;
+        totalEl.textContent = formatINR(newTotal);
+
+        row.remove();
+        if (!tbody.children.length) {
+          card.innerHTML = '<p class="text-muted mb-0">Nothing pending — every payment milestone on your confirmed/delivered orders is either received or hasn\'t been set up yet.</p>';
+        }
+      })
+      .catch(() => { submitBtn.disabled = false; });
+  });
+})();
+</script>
+{% endblock %}

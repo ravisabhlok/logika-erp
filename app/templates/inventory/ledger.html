@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Stock Ledger - {{ item.name }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">Stock Ledger: {{ item.name }}</h4>
+  <span class="fs-5">
+    Current Stock:
+    {% if item.has_serial %}
+    <a href="/inventory/{{ item.id }}/serials" class="text-decoration-none" title="View serial numbers"><strong>{{ item.current_stock|qty }}</strong></a>
+    {% else %}
+    <strong>{{ item.current_stock|qty }}</strong>
+    {% endif %}
+  </span>
+</div>
+<div class="card p-3">
+  <table class="table table-sm mb-0">
+    <thead><tr><th>Date</th><th>Type</th><th class="text-end">Qty</th><th>Reference</th><th>Notes</th></tr></thead>
+    <tbody>
+    {% for t in transactions %}
+      <tr>
+        <td>{{ t.transaction_date|dt }}</td>
+        <td><span class="badge bg-{{ 'success' if t.transaction_type == 'IN' else ('danger' if t.transaction_type == 'OUT' else 'secondary') }}">{{ t.transaction_type }}</span></td>
+        <td class="text-end">{{ t.quantity|qty }}</td>
+        <td>
+          {% if t.reference_type == 'sales_order' and t.reference_id %}
+            <a href="/sales/{{ t.reference_id }}">Sales Order #{{ t.reference_id }}</a>
+          {% elif t.reference_type == 'purchase_order' and t.reference_id %}
+            <a href="/purchase/{{ t.reference_id }}">Purchase Order #{{ t.reference_id }}</a>
+          {% elif t.reference_type == 'production_order' and t.reference_id %}
+            <a href="/production/{{ t.reference_id }}">Production Order #{{ t.reference_id }}</a>
+          {% elif t.reference_type %}
+            {{ t.reference_type }}{% if t.reference_id %} #{{ t.reference_id }}{% endif %}
+          {% else %}
+            -
+          {% endif %}
+        </td>
+        <td>{{ t.notes or "-" }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="text-muted text-center">No stock movements yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<a href="/inventory" class="btn btn-link mt-3">Back to Inventory</a>
+{% endblock %}

@@ -1,0 +1,170 @@
+{% extends "base.html" %}
+{% block title %}Payment Schedule — {{ order.order_no }}{% endblock %}
+{% block content %}
+<h4 class="mb-3">Payment Schedule — {{ order.order_no }}</h4>
+<div class="form-text mb-3">
+  Editable regardless of order status — nothing here touches stock.
+  Basic Value: {{ order.total_amount|inr }}. GST: {{ (order.gst_amount or 0)|inr }}. Invoice Value: {{ (order.total_amount + (order.gst_amount or 0))|inr }}.
+</div>
+
+<div class="card p-4">
+  <div id="scheduleWarning" class="alert alert-warning py-2" style="display:none;"></div>
+  <form method="post" action="/sales/{{ order.id }}/payment-terms/edit" id="paymentTermsForm">
+    <table class="table table-sm" id="paymentTable">
+      <thead>
+        <tr>
+          <th>Description</th>
+          <th style="width:70px;">%</th>
+          <th style="width:150px;">% of</th>
+          <th style="width:110px;">Amount</th>
+          <th style="width:140px;">Due Date</th>
+          <th style="width:110px;">or Days After Invoice</th>
+          <th style="width:130px;">Secured By</th>
+          <th style="width:140px;">BG Expiry</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+      <tfoot>
+        <tr><th colspan="3" class="text-end">Total Scheduled</th><th><span id="scheduleTotal">0.00</span></th><th colspan="5"></th></tr>
+      </tfoot>
+    </table>
+    <button type="button" class="btn btn-outline-secondary btn-sm mb-3" onclick="addPaymentRow()">+ Add Payment Term</button>
+
+    <div class="form-text mb-3">
+      Describe each milestone freely (e.g. "30% Advance", "Retention — released after warranty"). Percentage pre-fills Amount from whichever base you pick in "% of" (Basic Value, Invoice Value incl. GST, or Basic Value + the full GST amount tacked on — common when tax is settled entirely with the final installment rather than spread across each one); Amount itself is what's saved and stays editable.
+      Use Due Date once you know the exact date, or "Days After Invoice" as a placeholder rule (e.g. 45) if it isn't fixed until the order's invoiced — there's no invoicing yet, so this just gets remembered until that's built. If both are filled in, Due Date wins.
+    </div>
+
+    <button type="submit" class="btn btn-dark">Save Payment Schedule</button>
+    <a href="/sales/{{ order.id }}" class="btn btn-link">Cancel</a>
+  </form>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.getElementById('paymentTermsForm').addEventListener('keydown', function (e) {
+  if (e.key === 'Enter' && e.target.type !== 'submit') {
+    e.preventDefault();
+  }
+});
+
+// Real payment terms often mix bases — e.g. an advance and a pre-dispatch
+// payment quoted as % of the basic (pre-tax) order value, with GST settled
+// entirely alongside the final installment rather than spread proportionally
+// across each one. So percentage-based prefill needs all three figures, not
+// just one blended total.
+const orderSubtotal = {{ order.total_amount|float }};
+const orderGst = {{ (order.gst_amount or 0)|float }};
+// Invoice Value (subtotal + GST) — payment terms are expected to add up to
+// this in total, since it's the actual amount the customer owes.
+const orderTotal = orderSubtotal + orderGst;
+const submittedPaymentTerms = [
+  {% for t in submitted_terms %}{
+    description: {{ t.description|tojson }},
+    percentage: {{ (t.percentage if t.percentage not in (None, '') else '')|tojson }},
+    amount: {{ t.amount|tojson }},
+    due_date: {{ t.due_date|tojson }},
+    days_after_invoice: {{ (t.days_after_invoice if t.days_after_invoice not in (None, '') else '')|tojson }},
+    secured_by: {{ t.secured_by|tojson }},
+    bg_expiry_date: {{ t.bg_expiry_date|tojson }},
+    status: {{ t.status|tojson }},
+    received_date: {{ t.received_date|tojson }},
+  },{% endfor %}
+];
+
+// `status`/`received_date` travel through as hidden inputs — this screen
+// only ever edits the plan (description/amount/dates/security). Marking a
+// milestone received is its own action on the order detail page (see
+// SalesOrderPaymentTerm's docstring); this just has to avoid clobbering
+// that state when the schedule is resaved.
+function addPaymentRow(t) {
+  t = t || {};
+  const tbody = document.querySelector('#paymentTable tbody');
+  const row = document.createElement('tr');
+  const securedByOptions = ['cash', 'bank_guarantee'].map(v =>
+    `<option value="${v}" ${t.secured_by === v ? 'selected' : ''}>${v === 'cash' ? 'Cash' : 'Bank Guarantee'}</option>`
+  ).join('');
+  const showBg = t.secured_by === 'bank_guarantee';
+  row.innerHTML = `
+    <td><input type="text" name="payment_description" class="form-control form-control-sm" value="${t.description || ''}" placeholder="e.g. Advance, On Delivery, Retention"></td>
+    <td><input type="number" name="payment_percentage" class="form-control form-control-sm pct-input" min="0" max="100" step="any" value="${t.percentage !== '' && t.percentage != null ? t.percentage : ''}" oninput="recalcPaymentAmount(this)"></td>
+    <td>
+      <select class="form-select form-select-sm pct-basis" onchange="recalcPaymentAmount(this)">
+        <option value="basic" selected>Basic Value</option>
+        <option value="invoice">Invoice Value (incl. GST)</option>
+        <option value="basic_plus_gst">Basic Value + Full GST</option>
+      </select>
+    </td>
+    <td><input type="number" name="payment_amount" class="form-control form-control-sm payment-amount" min="0" step="any" value="${t.amount != null ? t.amount : ''}" oninput="recalcScheduleTotal()"></td>
+    <td><input type="date" name="payment_due_date" class="form-control form-control-sm" value="${t.due_date || ''}"></td>
+    <td><input type="number" name="payment_days_after_invoice" class="form-control form-control-sm" min="0" step="1" placeholder="e.g. 45" value="${t.days_after_invoice !== '' && t.days_after_invoice != null ? t.days_after_invoice : ''}"></td>
+    <td><select name="payment_secured_by" class="form-select form-select-sm" onchange="toggleBgExpiry(this)">${securedByOptions}</select></td>
+    <td><input type="date" name="payment_bg_expiry" class="form-control form-control-sm bg-expiry-input" value="${t.bg_expiry_date || ''}" ${showBg ? '' : 'style="display:none;"'}></td>
+    <td>
+      <input type="hidden" name="payment_status" value="${t.status || 'pending'}">
+      <input type="hidden" name="payment_received_date" value="${t.received_date || ''}">
+      ${t.status === 'received' ? '<span class="badge bg-success me-1" title="Already marked received — change this from the order page, not here">Received</span>' : ''}
+      <button type="button" class="btn btn-sm btn-outline-danger" onclick="$(this).closest('tr').remove(); recalcScheduleTotal();">x</button>
+    </td>
+  `;
+  tbody.appendChild(row);
+  recalcScheduleTotal();
+}
+
+// Percentage is only ever a convenience: typing one (against whichever
+// base "% of" selects) fills in `amount`, but amount itself stays freely
+// editable afterward and nothing keeps recomputing it later — same
+// "computed default, editable after" pattern as the line-item unit price
+// defaulting from the item's list price. Not stored anywhere — the basis
+// choice only matters for this one calculation, same as the percentage
+// itself doesn't dictate anything once `amount` is saved.
+function recalcPaymentAmount(el) {
+  const row = el.closest('tr');
+  const pct = parseFloat(row.querySelector('.pct-input').value);
+  if (isNaN(pct)) return;
+  const basis = row.querySelector('.pct-basis').value;
+  let amount;
+  if (basis === 'invoice') {
+    amount = orderTotal * pct / 100;
+  } else if (basis === 'basic_plus_gst') {
+    amount = (orderSubtotal * pct / 100) + orderGst;
+  } else {
+    amount = orderSubtotal * pct / 100;
+  }
+  row.querySelector('.payment-amount').value = amount.toFixed(2);
+  recalcScheduleTotal();
+}
+
+function toggleBgExpiry(select) {
+  const bgInput = select.closest('tr').querySelector('.bg-expiry-input');
+  bgInput.style.display = select.value === 'bank_guarantee' ? '' : 'none';
+}
+
+// Sums every row's Amount and flags it (not blocks it — the person filling
+// this in may still be mid-edit) if it doesn't add up to the order's
+// Invoice Value.
+function recalcScheduleTotal() {
+  let total = 0;
+  document.querySelectorAll('.payment-amount').forEach(el => total += parseFloat(el.value) || 0);
+  document.getElementById('scheduleTotal').textContent = formatINR(total);
+
+  const warning = document.getElementById('scheduleWarning');
+  const diff = total - orderTotal;
+  if (Math.abs(diff) > 0.01) {
+    warning.textContent = `Payment schedule totals ${formatINR(total)}, which doesn't match the Invoice Value of ${formatINR(orderTotal)} (${diff < 0 ? 'short by ' + formatINR(Math.abs(diff)) : 'over by ' + formatINR(diff)}).`;
+    warning.style.display = 'block';
+  } else {
+    warning.style.display = 'none';
+  }
+}
+
+if (submittedPaymentTerms.length) {
+  submittedPaymentTerms.forEach(t => addPaymentRow(t));
+} else {
+  addPaymentRow();
+}
+recalcScheduleTotal();
+</script>
+{% endblock %}

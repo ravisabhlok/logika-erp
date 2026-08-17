@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}{{ vendor.name }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start mb-3">
+  <h4 class="mb-0">{{ vendor.name }}</h4>
+  <div>
+    {% if perms.edit %}
+    <a href="/vendors/{{ vendor.id }}/edit" class="btn btn-outline-secondary btn-sm">Edit</a>
+    {% endif %}
+    {% if perms.delete %}
+    <form method="post" action="/vendors/{{ vendor.id }}/delete" class="d-inline" onsubmit="return confirm('Delete this vendor?');">
+      <button class="btn btn-outline-danger btn-sm">Delete</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-md-3">
+    <div class="card p-3"><div class="text-muted small">Contact Person</div><div class="fs-6">{{ vendor.contact_person or "-" }}</div></div>
+  </div>
+  <div class="col-md-3">
+    <div class="card p-3"><div class="text-muted small">Phone</div><div class="fs-6">{{ vendor.phone or "-" }}</div></div>
+  </div>
+  <div class="col-md-3">
+    <div class="card p-3"><div class="text-muted small">Email</div><div class="fs-6">{{ vendor.email or "-" }}</div></div>
+  </div>
+  <div class="col-md-3">
+    <div class="card p-3"><div class="text-muted small">GSTIN</div><div class="fs-6">{{ vendor.gstin or "-" }}</div></div>
+  </div>
+</div>
+
+{% if vendor.address %}
+<div class="card p-3 mb-3">
+  <div class="text-muted small">Address</div>
+  <div>{{ vendor.address }}</div>
+</div>
+{% endif %}
+
+<div class="card p-3 mb-3">
+  <div class="d-flex justify-content-between align-items-center mb-2">
+    <h6 class="mb-0">Recent Purchase Orders</h6>
+    <a href="/purchase/new" class="btn btn-dark btn-sm">+ New Purchase Order</a>
+  </div>
+  {% if recent_orders %}
+  <table class="table table-sm mb-0">
+    <thead><tr><th>Order#</th><th>Date</th><th>Status</th><th class="text-end">Total</th></tr></thead>
+    <tbody>
+    {% for o in recent_orders %}
+      <tr onclick="window.location='/purchase/{{ o.id }}'" style="cursor:pointer;">
+        <td>{{ o.order_no }}</td>
+        <td>{{ o.order_date|dt('%d-%b-%Y') }}</td>
+        <td><span class="badge bg-{{ {'draft':'secondary','ordered':'primary','received':'success','cancelled':'danger'}[o.status] }}">{{ o.status }}</span></td>
+        <td class="text-end">{{ o.total_amount|inr }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="text-muted mb-0">No purchase orders yet for this vendor.</p>
+  {% endif %}
+</div>
+
+<a href="/vendors" class="btn btn-link">Back to Vendors</a>
+{% endblock %}
