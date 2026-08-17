@@ -2,6 +2,8 @@
 Application configuration, loaded from environment variables (.env file).
 """
 import os
+from urllib.parse import quote_plus
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -22,8 +24,15 @@ class Settings:
 
     @property
     def database_url(self) -> str:
+        # DB_USER / DB_PASSWORD are URL-encoded so that special characters
+        # (e.g. "@", ":", "/") in either one can't be misread as URL
+        # structure (this previously broke connections for passwords
+        # containing "@", since it looks identical to the user@host
+        # separator).
+        user = quote_plus(self.DB_USER)
+        password = quote_plus(self.DB_PASSWORD)
         return (
-            f"mysql+pymysql://{self.DB_USER}:{self.DB_PASSWORD}"
+            f"mysql+pymysql://{user}:{password}"
             f"@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
         )
 
