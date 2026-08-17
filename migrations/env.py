@@ -20,7 +20,16 @@ config = context.config
 
 # Always use the same DB credentials as the running app (from .env), rather
 # than a separate copy hardcoded in alembic.ini.
-config.set_main_option("sqlalchemy.url", settings.database_url)
+#
+# config.set_main_option() stores this through Python's configparser, which
+# treats "%" as the start of its own interpolation syntax (e.g. "%(name)s").
+# If the URL contains a literal "%" (e.g. "%40" from a URL-encoded password
+# containing "@"), configparser misreads it and raises
+# "invalid interpolation syntax" -- doubling every "%" to "%%" is
+# configparser's own escape sequence for a literal percent sign.
+config.set_main_option(
+    "sqlalchemy.url", settings.database_url.replace("%", "%%")
+)
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
