@@ -1,21 +1,26 @@
 import io
 import re
 from datetime import datetime
+from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import APIRouter, Request, Depends, Form
-from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi.responses import RedirectResponse, StreamingResponse, Response
 from fastapi.templating import Jinja2Templates
+from markupsafe import Markup, escape
 from openpyxl import Workbook
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
+from xhtml2pdf import pisa
 
 from app.database import get_db
-from app.auth import require_module_permission, get_user_module_permissions
+from app.auth import require_module_permission, get_user_module_permissions, require_admin
 from app.formatting import format_qty, format_inr, format_money, format_dt, IST_OFFSET, CURRENCY_SYMBOLS
 from app.models import (
-    PurchaseOrder, PurchaseOrderItem, Vendor, Item, StockTransaction, ItemSerial, User,
+    PurchaseOrder, PurchaseOrderItem, Vendor, Item, StockTransaction, ItemSerial, User, Company,
 )
 from app.requirements import compute_demand_map, on_order_qty, last_vendor
 from app.audit import diff_fields, log_field_changes, log_action
@@ -26,6 +31,20 @@ templates.env.filters["qty"] = format_qty
 templates.env.filters["inr"] = format_inr
 templates.env.filters["money"] = format_money
 templates.env.filters["dt"] = format_dt
+
+
+def _nl2br(value):
+    """Same xhtml2pdf quirk/fix as sales.py's _nl2br — see that function's
+    docstring (each router keeps its own small Jinja2Templates instance and
+    filter set in this app rather than a shared central environment, so
+    this is deliberately duplicated here, not imported)."""
+    if not value:
+        return ""
+    lines = [str(escape(line)) for line in str(value).split("\n")]
+    return Markup("<br/>".join(lines))
+
+
+templates.env.filters["nl2br"] = _nl2br
 
 
 def next_order_no(db: Session) -> str:
@@ -229,6 +248,63 @@ def view_purchase_order(order_id: int, request: Request, db: Session = Depends(g
     return templates.TemplateResponse("purchase/detail.html", {"request": request, "user": user, "order": order, "perms": perms})
 
 
+# Purchase orders this document can be downloaded for. Gated on status, not
+# just permission, so the PDF can't be pulled (e.g. by hitting the URL
+# directly) before an admin has approved it AND a second person has
+# confirmed it — see approve_purchase_order and confirm_purchase_order.
+DOWNLOADABLE_PURCHASE_STATUSES = ("ordered", "received")
+
+
+@router.get("/{order_id}/pdf")
+def purchase_order_pdf(order_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(require_module_permission("purchase", "view"))):
+    """Same approach as sales.py's sales_order_pdf: renders purchase/pdf.html
+    (a standalone print layout, not base.html) to HTML and converts it to a
+    PDF via xhtml2pdf. Only available once the order has been approved
+    (status 'ordered' or 'received') — before that there's nothing
+    authorized to hand to a vendor yet."""
+    order = (
+        db.query(PurchaseOrder)
+        .options(joinedload(PurchaseOrder.vendor), joinedload(PurchaseOrder.items).joinedload(PurchaseOrderItem.item))
+        .get(order_id)
+    )
+    if not order:
+        return RedirectResponse(url="/purchase?error=Purchase order not found", status_code=303)
+    if order.status not in DOWNLOADABLE_PURCHASE_STATUSES:
+        return RedirectResponse(
+            url=f"/purchase/{order_id}?error=This purchase order must be approved before it can be downloaded",
+            status_code=303,
+        )
+
+    company = db.query(Company).first()
+    # Same palette as the status badge on purchase/detail.html and
+    # purchase/list.html, just as hex since the PDF has no Bootstrap.
+    status_color = {
+        "draft": "#6c757d", "pending_approval": "#a06a00", "pending_confirmation": "#a06a00",
+        "ordered": "#0d6efd", "received": "#198754", "cancelled": "#dc3545",
+    }.get(order.status, "#6c757d")
+    logo_file = Path(__file__).resolve().parent.parent / "static" / "Logo.jpg"
+    logo_path = str(logo_file) if logo_file.exists() else None
+    html = templates.get_template("purchase/pdf.html").render(
+        order=order, company=company, generated_at=datetime.utcnow(),
+        status_color=status_color, logo_path=logo_path, request=request, user=user,
+    )
+    buffer = io.BytesIO()
+    result = pisa.CreatePDF(io.StringIO(html), dest=buffer)
+    if result.err:
+        return Response(content="Failed to generate PDF", status_code=500)
+    buffer.seek(0)
+    return Response(
+        content=buffer.read(),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="{order.order_no}.pdf"',
+            # Regenerated fresh from the DB on every request — see
+            # sales_order_pdf's identical comment for why this matters.
+            "Cache-Control": "no-store, no-cache, must-revalidate",
+        },
+    )
+
+
 # Statuses a purchase order can still be edited from. Stock (and, for
 # serialized items, ItemSerial rows) only get written once an order is
 # marked 'received' (see receive_purchase_order) — so editing anything up
@@ -238,7 +314,12 @@ def view_purchase_order(order_id: int, request: Request, db: Session = Depends(g
 # is allowed too since it never touched stock either; editing one revives
 # it back to 'draft' (see update_purchase_order below) rather than leaving
 # it edited but still marked cancelled — same convention Sales Orders use,
-# see app/routers/sales.py's edit_sales_form.
+# see app/routers/sales.py's edit_sales_form. 'pending_approval' and
+# 'pending_confirmation' are deliberately NOT in this list — an order
+# awaiting approval or confirmation shouldn't be editable out from under
+# whoever is reviewing it; reject it back to draft first (see
+# reject_purchase_order / reject_purchase_order_confirmation) if it needs
+# changes.
 EDITABLE_PURCHASE_STATUSES = ("draft", "ordered", "cancelled")
 
 
@@ -367,9 +448,21 @@ def update_purchase_status(
     db: Session = Depends(get_db),
     user: User = Depends(require_module_permission("purchase", "edit")),
 ):
+    """Generic status-change endpoint — deliberately narrow. 'ordered' can
+    only be reached through confirm_purchase_order now (after
+    approve_purchase_order moves it to 'pending_confirmation'), and
+    'received' always needed its own dedicated flow to capture serial
+    numbers — so this route only ever actually handles 'cancelled'. Kept as
+    its own endpoint (rather than folded away) since Cancel remains a plain,
+    unconditional action from draft/pending_approval/pending_confirmation/
+    ordered alike, with nothing else to capture."""
     if new_status == "received":
-        # Receiving requires the dedicated flow so serial numbers can be captured.
         return RedirectResponse(url=f"/purchase/{order_id}/receive", status_code=303)
+    if new_status != "cancelled":
+        return RedirectResponse(
+            url=f"/purchase/{order_id}?error=Use Send for Approval / Approve / Reject to change this order's status",
+            status_code=303,
+        )
 
     order = db.query(PurchaseOrder).get(order_id)
     old_status = order.status
@@ -378,6 +471,152 @@ def update_purchase_status(
         log_action(db, user, "purchase_order", order.id, order.order_no, "status_change", summary=f"{old_status} -> {new_status}")
     db.commit()
     return RedirectResponse(url=f"/purchase/{order_id}?success=Status updated", status_code=303)
+
+
+@router.post("/{order_id}/send-for-approval")
+def send_purchase_order_for_approval(
+    order_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_module_permission("purchase", "edit")),
+):
+    """Staff-facing half of the approval workflow: draft -> pending_approval.
+    Same permission as everything else that used to move an order straight
+    to 'ordered' — the difference now is it stops one step short and waits
+    for an admin."""
+    order = db.query(PurchaseOrder).get(order_id)
+    if not order:
+        return RedirectResponse(url="/purchase?error=Purchase order not found", status_code=303)
+    if order.status != "draft":
+        return RedirectResponse(
+            url=f"/purchase/{order_id}?error=Only a draft order can be sent for approval",
+            status_code=303,
+        )
+    order.status = "pending_approval"
+    log_action(
+        db, user, "purchase_order", order.id, order.order_no, "status_change",
+        summary=f"Sent for approval by {user.username} — draft -> pending_approval",
+    )
+    db.commit()
+    return RedirectResponse(url=f"/purchase/{order_id}?success=Sent for approval", status_code=303)
+
+
+@router.post("/{order_id}/approve")
+def approve_purchase_order(
+    order_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    """Admin-facing half: pending_approval -> pending_confirmation.
+    Deliberately gated on require_admin (the coarse admin/staff account
+    type) rather than the per-module permission matrix — approval is meant
+    to be a genuine second set of eyes, not something the same
+    Purchase-module-edit permission that got the order to
+    'pending_approval' can also grant itself. Approval alone no longer
+    unlocks the PDF — a second, independently-permissioned person still has
+    to confirm it (see confirm_purchase_order) before it reaches 'ordered'
+    and becomes downloadable (see DOWNLOADABLE_PURCHASE_STATUSES)."""
+    order = db.query(PurchaseOrder).get(order_id)
+    if not order:
+        return RedirectResponse(url="/purchase?error=Purchase order not found", status_code=303)
+    if order.status != "pending_approval":
+        return RedirectResponse(
+            url=f"/purchase/{order_id}?error=Only an order pending approval can be approved",
+            status_code=303,
+        )
+    order.status = "pending_confirmation"
+    order.approved_by = user.id
+    order.approved_at = datetime.utcnow()
+    log_action(
+        db, user, "purchase_order", order.id, order.order_no, "approve",
+        summary=f"Approved by {user.username} — pending_approval -> pending_confirmation",
+    )
+    db.commit()
+    return RedirectResponse(url=f"/purchase/{order_id}?success=Purchase order approved — awaiting confirmation", status_code=303)
+
+
+@router.post("/{order_id}/reject")
+def reject_purchase_order(
+    order_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    """The other admin-facing option: pending_approval -> draft, so an
+    order that isn't right yet can go back for changes instead of being
+    stuck waiting or getting approved anyway. Same require_admin gate as
+    approve_purchase_order."""
+    order = db.query(PurchaseOrder).get(order_id)
+    if not order:
+        return RedirectResponse(url="/purchase?error=Purchase order not found", status_code=303)
+    if order.status != "pending_approval":
+        return RedirectResponse(
+            url=f"/purchase/{order_id}?error=Only an order pending approval can be rejected",
+            status_code=303,
+        )
+    order.status = "draft"
+    log_action(
+        db, user, "purchase_order", order.id, order.order_no, "status_change",
+        summary=f"Rejected by {user.username} — pending_approval -> draft",
+    )
+    db.commit()
+    return RedirectResponse(url=f"/purchase/{order_id}?success=Sent back to draft for changes", status_code=303)
+
+
+@router.post("/{order_id}/confirm")
+def confirm_purchase_order(
+    order_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_module_permission("purchase", "confirm")),
+):
+    """Second sign-off, after an admin's approval: pending_confirmation ->
+    ordered. Gated on the "confirm" action of the per-module permission
+    matrix (RolePermission.can_confirm — see app.auth.ACTIONS), which an
+    admin assigns per-Role on the Roles page, independent of the
+    admin-only approve/reject gate above. 'ordered' is what unlocks the PDF
+    download (see DOWNLOADABLE_PURCHASE_STATUSES)."""
+    order = db.query(PurchaseOrder).get(order_id)
+    if not order:
+        return RedirectResponse(url="/purchase?error=Purchase order not found", status_code=303)
+    if order.status != "pending_confirmation":
+        return RedirectResponse(
+            url=f"/purchase/{order_id}?error=Only an order pending confirmation can be confirmed",
+            status_code=303,
+        )
+    order.status = "ordered"
+    order.confirmed_by = user.id
+    order.confirmed_at = datetime.utcnow()
+    log_action(
+        db, user, "purchase_order", order.id, order.order_no, "confirm",
+        summary=f"Confirmed by {user.username} — pending_confirmation -> ordered",
+    )
+    db.commit()
+    return RedirectResponse(url=f"/purchase/{order_id}?success=Purchase order confirmed", status_code=303)
+
+
+@router.post("/{order_id}/reject-confirmation")
+def reject_purchase_order_confirmation(
+    order_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_module_permission("purchase", "confirm")),
+):
+    """The other confirm-facing option: pending_confirmation -> draft, so an
+    order that isn't right yet can go back for changes (and will need to be
+    sent for approval again) instead of being stuck waiting or getting
+    confirmed anyway. Same "confirm" permission gate as confirm_purchase_order."""
+    order = db.query(PurchaseOrder).get(order_id)
+    if not order:
+        return RedirectResponse(url="/purchase?error=Purchase order not found", status_code=303)
+    if order.status != "pending_confirmation":
+        return RedirectResponse(
+            url=f"/purchase/{order_id}?error=Only an order pending confirmation can be rejected",
+            status_code=303,
+        )
+    order.status = "draft"
+    log_action(
+        db, user, "purchase_order", order.id, order.order_no, "status_change",
+        summary=f"Confirmation rejected by {user.username} — pending_confirmation -> draft",
+    )
+    db.commit()
+    return RedirectResponse(url=f"/purchase/{order_id}?success=Sent back to draft for changes", status_code=303)
 
 
 def _split_serials(raw: str) -> list[str]:
@@ -482,3 +721,56 @@ async def receive_purchase_order(order_id: int, request: Request, db: Session = 
     )
     db.commit()
     return RedirectResponse(url=f"/purchase/{order_id}?success=Order received and stock updated", status_code=303)
+
+
+def get_purchase_order_delete_blockers(order: PurchaseOrder) -> list[str]:
+    """Reasons a purchase order can't be hard-deleted — same style as
+    items.py's get_item_delete_blockers. 'received' has real history
+    depending on it: ItemSerial rows carry an actual FK to this order
+    (purchase_order_id/purchase_order_item_id), and StockTransaction rows
+    reference it too (reference_id — not a DB-level FK, but still meant to
+    stay resolvable as an audit trail) — deleting it would either violate
+    the serial FK outright or silently orphan the stock history. 'ordered'
+    isn't a technical/FK problem (nothing writes stock until receipt), but
+    it represents a real, admin-approved and confirmed document that may
+    already be with the vendor — Cancel is the correct way to retire one of
+    those without losing the record of what was approved. 'draft',
+    'pending_approval', and 'cancelled' never touched any of that, so those
+    stay freely deletable. 'pending_confirmation' is deliberately NOT
+    listed as freely deletable either — it's already been through admin
+    approval, so it falls into the same "cancel instead" bucket as 'ordered'
+    below rather than being treated like a plain draft."""
+    blockers = []
+    if order.status == "received":
+        blockers.append("it has been received — stock levels and serial numbers were recorded against it")
+    elif order.status not in ("draft", "pending_approval", "cancelled"):
+        blockers.append(f"it's been approved and is '{order.status}' — cancel it instead to keep a record of what was ordered")
+    return blockers
+
+
+@router.post("/{order_id}/delete")
+def delete_purchase_order(order_id: int, db: Session = Depends(get_db), user: User = Depends(require_module_permission("purchase", "delete"))):
+    order = db.query(PurchaseOrder).options(joinedload(PurchaseOrder.vendor)).get(order_id)
+    if not order:
+        return RedirectResponse(url="/purchase?error=Purchase order not found", status_code=303)
+
+    blockers = get_purchase_order_delete_blockers(order)
+    if blockers:
+        msg = f"Can't delete {order.order_no} — {'; '.join(blockers)}."
+        return RedirectResponse(url=f"/purchase/{order_id}?error={quote(msg)}", status_code=303)
+
+    try:
+        log_action(
+            db, user, "purchase_order", order.id, order.order_no, "delete",
+            summary=f"Deleted '{order.order_no}' ({order.vendor.name if order.vendor else order.vendor_id})",
+        )
+        db.delete(order)
+        db.commit()
+    except IntegrityError:
+        # Belt-and-braces: catch any reference the checks above didn't
+        # anticipate rather than surfacing a raw 500 to the user.
+        db.rollback()
+        msg = f"Can't delete {order.order_no} — it's still referenced elsewhere."
+        return RedirectResponse(url=f"/purchase/{order_id}?error={quote(msg)}", status_code=303)
+
+    return RedirectResponse(url="/purchase?success=Purchase order deleted", status_code=303)

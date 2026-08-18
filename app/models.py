@@ -80,6 +80,12 @@ class RolePermission(Base):
     can_add = Column(Boolean, default=False, nullable=False)
     can_edit = Column(Boolean, default=False, nullable=False)
     can_delete = Column(Boolean, default=False, nullable=False)
+    # Currently only meaningful for module="purchase" — see app.auth.ACTIONS
+    # and confirm_purchase_order in app/routers/purchase.py. Still a plain
+    # column on every module's row like the other four, not a
+    # purchase-specific side table, for the same reason `module` above is a
+    # free string rather than one row-shape per module.
+    can_confirm = Column(Boolean, default=False, nullable=False)
 
     role = relationship("Role", back_populates="permissions")
 
@@ -419,8 +425,27 @@ class PurchaseOrder(Base):
     order_no = Column(String(40), unique=True, nullable=False, index=True)
     vendor_id = Column(Integer, ForeignKey("vendors.id"), nullable=False)
     order_date = Column(DateTime, default=datetime.utcnow)
+    # draft -> pending_approval -> pending_confirmation -> ordered -> received
+    # (or -> cancelled from any of the first four). Two separate sign-offs,
+    # deliberately by two different gates:
+    #   1. Staff moves a draft to pending_approval
+    #      (send_purchase_order_for_approval). Only an admin account can
+    #      then move it on to pending_confirmation (approve_purchase_order)
+    #      or back to draft (reject_purchase_order) — see require_admin on
+    #      both, in app/routers/purchase.py.
+    #   2. Whoever holds the "confirm" permission on the Purchase module
+    #      (a per-Role checkbox, assigned like any other permission — see
+    #      RolePermission.can_confirm and app.auth.ACTIONS) then moves it on
+    #      to ordered (confirm_purchase_order) or back to draft
+    #      (reject_purchase_order_confirmation). Deliberately a different
+    #      gate than step 1's admin-only approval — the point is a second,
+    #      independent person, not the same admin confirming their own
+    #      approval.
+    # The PDF download (purchase_order_pdf) is gated on having reached
+    # 'ordered' or later, so nothing goes out to a vendor until both sign-offs
+    # are in.
     status = Column(
-        Enum("draft", "ordered", "received", "cancelled", name="purchase_status"),
+        Enum("draft", "pending_approval", "pending_confirmation", "ordered", "received", "cancelled", name="purchase_status"),
         default="draft", nullable=False,
     )
     # 3-letter ISO code (INR, USD, ...) the vendor invoices this order in,
@@ -438,9 +463,22 @@ class PurchaseOrder(Base):
     notes = Column(Text)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    # Set together by approve_purchase_order the moment an admin approves —
+    # both stay null for an order that's never been through approval (e.g.
+    # one from before this feature existed, still sitting in draft).
+    approved_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    approved_at = Column(DateTime, nullable=True)
+    # Same idea, one step later: set together by confirm_purchase_order.
+    # Deliberately a separate pair of columns from approved_by/approved_at
+    # rather than reusing them — an order's approver and confirmer are
+    # meant to be two different people, and this keeps both on the record.
+    confirmed_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    confirmed_at = Column(DateTime, nullable=True)
 
     vendor = relationship("Vendor", back_populates="purchase_orders")
     items = relationship("PurchaseOrderItem", back_populates="purchase_order", cascade="all, delete-orphan")
+    approved_by_user = relationship("User", foreign_keys=[approved_by])
+    confirmed_by_user = relationship("User", foreign_keys=[confirmed_by])
 
 
 class PurchaseOrderItem(Base):

@@ -1,0 +1,12 @@
+On your PC (PowerShell, in C:\Python\ERP):
+
+git add .
+git commit -m "describe the change"
+git push origin main
+
+On the office server (SSH in as yourself, then):
+
+cd /opt/logika-erp
+sudo -u erp git pull origin main
+sudo -u erp ./venv/bin/alembic upgrade head
+sudo -u erp ./venv/bin/python run.py

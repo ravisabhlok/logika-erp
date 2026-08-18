@@ -1,0 +1,183 @@
+<!--
+Standalone print layout for the Purchase Order PDF (GET /purchase/{id}/pdf).
+Deliberately NOT extending base.html — same reason as sales/pdf.html:
+rendered outside a browser, through xhtml2pdf, which only understands a
+small subset of CSS (no flexbox/grid, no Bootstrap, no border-radius, no
+box-shadow). Keep markup to plain tables/divs.
+
+Structurally mirrors sales/pdf.html (same reference Zoho-style layout —
+logo top-left, doc title top-right, dark table header, shaded total row,
+signature line), simplified for what a Purchase Order actually has: one
+party (Vendor, not a Bill To/Ship To pair), no GST-amount/payment-schedule
+fields (PurchaseOrder has none — see models.py), and added "Approved by" /
+"Confirmed by" lines since this document is only ever generated once an
+admin has approved the order AND a second person has confirmed it (see
+DOWNLOADABLE_PURCHASE_STATUSES in app/routers/purchase.py).
+-->
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  @page { size: A4; margin: 1.7cm 1.6cm; }
+  body { font-family: Helvetica, Arial, sans-serif; font-size: 9.5pt; color: #262626; margin: 0; }
+  h2.section { font-size: 10.5pt; color: #16324f; margin: 16px 0 4px 0; }
+
+  /* Header: logo left, doc title right */
+  table.header-row { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
+  table.header-row td { vertical-align: top; padding: 0; }
+  .doc-title { font-size: 22pt; color: #333333; text-align: right; }
+  .doc-subtitle { font-size: 10.5pt; color: #333333; text-align: right; margin-top: 2px; }
+  .status-pill {
+    display: inline; color: #ffffff; font-size: 7.5pt; font-weight: bold;
+    padding: 2px 8px; background-color: {{ status_color }}; margin-top: 5px;
+  }
+  .status-wrap { text-align: right; margin-top: 5px; }
+
+  .co-name { font-weight: bold; font-size: 10.5pt; color: #262626; margin-top: 6px; }
+  .co-detail { color: #4a4a4a; font-size: 9pt; margin-top: 1px; }
+
+  /* Order meta (right-aligned label/value rows) */
+  table.order-meta { border-collapse: collapse; margin-top: 10px; margin-left: auto; width: 300px; }
+  table.order-meta td { padding: 2px 0; font-size: 9pt; }
+  table.order-meta td.m-label { color: #6a6a6a; text-align: right; width: 130px; padding-right: 8px; }
+  table.order-meta td.m-value { color: #262626; font-weight: bold; text-align: right; width: 170px; }
+
+  /* Vendor — single party, no Bill To/Ship To pair for a Purchase Order */
+  table.parties { width: 100%; border-collapse: collapse; margin-top: 16px; }
+  table.parties td.party-cell { width: 60%; vertical-align: top; font-size: 9pt; }
+  .party-label { color: #6a6a6a; font-size: 8pt; font-weight: bold; text-transform: uppercase; margin-bottom: 3px; }
+  .party-name { font-weight: bold; font-size: 10pt; color: #262626; margin-bottom: 2px; }
+
+  /* Items table */
+  table.items { width: 100%; border-collapse: collapse; margin-top: 14px; }
+  table.items th {
+    background-color: #16324f; color: #ffffff; font-size: 8.5pt;
+    padding: 7px 8px; text-align: left; border: none; font-weight: normal;
+  }
+  table.items td { padding: 8px 8px; font-size: 9.5pt; border-bottom: 1px solid #e6e6e6; vertical-align: top; }
+  .text-end { text-align: right; }
+  .item-name { font-weight: bold; color: #262626; }
+
+  /* Totals */
+  table.totals { width: 45%; margin-left: 55%; border-collapse: collapse; margin-top: 4px; }
+  table.totals td { padding: 6px 8px; font-size: 9.5pt; }
+  table.totals .t-label { color: #4a4a4a; }
+  table.totals .t-value { text-align: right; }
+  table.totals tr.grand td {
+    background-color: #f0f0f0; color: #262626; font-weight: bold; font-size: 10.5pt;
+    padding: 8px; border-top: 1.5px solid #333333;
+  }
+
+  /* Approval line */
+  .approval-text { font-size: 8.5pt; color: #4a4a4a; margin-top: 4px; line-height: 1.5; }
+
+  /* Terms & notes */
+  .notes-text { font-size: 8.5pt; color: #4a4a4a; margin-top: 4px; line-height: 1.5; }
+
+  /* Signature */
+  table.signature { width: 100%; border-collapse: collapse; margin-top: 46px; }
+  table.signature td.sig-cell { width: 45%; }
+  .sig-line { border-top: 1px solid #333333; padding-top: 4px; font-size: 8.5pt; color: #4a4a4a; }
+
+  /* Footer */
+  .footer { margin-top: 18px; padding-top: 6px; border-top: 1px solid #e6e6e6; font-size: 7.5pt; color: #a0a0a0; text-align: center; }
+</style>
+</head>
+<body>
+
+<table class="header-row">
+  <tr>
+    <td style="width: 55%;">
+      {% if logo_path %}
+      <img src="{{ logo_path }}" style="width: 170px; height: 52px;" />
+      {% endif %}
+      <div class="co-name">{{ company.name if company else "Logika Systems India Pvt Ltd" }}</div>
+      {% if company and company.address %}
+      <div class="co-detail">{{ company.address|nl2br }}</div>
+      {% endif %}
+      {% if company and company.gstin %}<div class="co-detail">GSTIN {{ company.gstin }}</div>{% endif %}
+    </td>
+    <td style="width: 45%;">
+      <div class="doc-title">PURCHASE ORDER</div>
+      <div class="doc-subtitle">Purchase Order# {{ order.order_no }}</div>
+      <div class="status-wrap"><span class="status-pill">{{ order.status|upper }}</span></div>
+      <table class="order-meta">
+        <tr><td class="m-label">Order Date :</td><td class="m-value">{{ order.order_date|dt('%d-%m-%Y') }}</td></tr>
+        {% if order.currency != 'INR' %}
+        <tr><td class="m-label">Currency :</td><td class="m-value">{{ order.currency }} (ref. rate {{ order.exchange_rate }} / INR)</td></tr>
+        {% endif %}
+      </table>
+    </td>
+  </tr>
+</table>
+
+<table class="parties">
+  <tr>
+    <td class="party-cell">
+      <div class="party-label">Vendor</div>
+      <div class="party-name">{{ order.vendor.name }}</div>
+      {% if order.vendor.address %}
+      <div>{{ order.vendor.address|nl2br }}</div>
+      {% endif %}
+      {% if order.vendor.gstin %}<div style="margin-top: 2px;">GSTIN {{ order.vendor.gstin }}</div>{% endif %}
+      {% if order.vendor.contact_person %}<div style="margin-top: 2px;">Attn: {{ order.vendor.contact_person }}</div>{% endif %}
+      {% if order.vendor.phone %}<div>{{ order.vendor.phone }}</div>{% endif %}
+    </td>
+  </tr>
+</table>
+
+<table class="items">
+  <thead>
+    <tr>
+      <th style="width: 5%;">#</th>
+      <th style="width: 37%;">Item &amp; Description</th>
+      <th style="width: 12%;">HSN/SAC</th>
+      <th style="width: 12%;" class="text-end">Qty</th>
+      <th style="width: 15%;" class="text-end">Rate</th>
+      <th style="width: 19%;" class="text-end">Amount</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for line in order.items %}
+    <tr>
+      <td>{{ loop.index }}</td>
+      <td class="item-name">{{ line.item.name }}</td>
+      <td>{{ line.item.hsn_code or "-" }}</td>
+      <td class="text-end">{{ line.quantity|qty }}</td>
+      <td class="text-end">{{ line.unit_price|money(order.currency) }}</td>
+      <td class="text-end">{{ line.total|money(order.currency) }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<table class="totals">
+  <tr class="grand"><td>Order Total</td><td class="t-value">{{ order.total_amount|money(order.currency) }}</td></tr>
+</table>
+
+{% if order.approved_by_user %}
+<div class="approval-text">Approved by {{ order.approved_by_user.full_name or order.approved_by_user.username }} on {{ order.approved_at|dt('%d-%b-%Y %H:%M') }} IST</div>
+{% endif %}
+{% if order.confirmed_by_user %}
+<div class="approval-text">Confirmed by {{ order.confirmed_by_user.full_name or order.confirmed_by_user.username }} on {{ order.confirmed_at|dt('%d-%b-%Y %H:%M') }} IST</div>
+{% endif %}
+
+{% if order.notes %}
+<h2 class="section">Notes</h2>
+<div class="notes-text">{{ order.notes|nl2br }}</div>
+{% endif %}
+
+<table class="signature">
+  <tr>
+    <td></td>
+    <td class="sig-cell"><div class="sig-line">Authorized Signature</div></td>
+  </tr>
+</table>
+
+<div class="footer">
+  This is a system-generated document &nbsp;·&nbsp; Generated on {{ generated_at|dt('%d-%b-%Y %H:%M') }} IST
+</div>
+
+</body>
+</html>

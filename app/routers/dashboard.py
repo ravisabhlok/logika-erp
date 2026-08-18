@@ -34,7 +34,7 @@ def dashboard(request: Request, db: Session = Depends(get_db), user: User = Depe
     recent_purchases = db.query(PurchaseOrder).order_by(PurchaseOrder.created_at.desc()).limit(5).all()
 
     open_sales = db.query(func.count(SalesOrder.id)).filter(SalesOrder.status.in_(["draft", "confirmed"])).scalar()
-    open_purchases = db.query(func.count(PurchaseOrder.id)).filter(PurchaseOrder.status.in_(["draft", "ordered"])).scalar()
+    open_purchases = db.query(func.count(PurchaseOrder.id)).filter(PurchaseOrder.status.in_(["draft", "pending_approval", "pending_confirmation", "ordered"])).scalar()
 
     payments_due_rows = compute_payments_due(db)[:5]
 

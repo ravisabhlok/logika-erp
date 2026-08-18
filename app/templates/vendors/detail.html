@@ -50,7 +50,7 @@
       <tr onclick="window.location='/purchase/{{ o.id }}'" style="cursor:pointer;">
         <td>{{ o.order_no }}</td>
         <td>{{ o.order_date|dt('%d-%b-%Y') }}</td>
-        <td><span class="badge bg-{{ {'draft':'secondary','ordered':'primary','received':'success','cancelled':'danger'}[o.status] }}">{{ o.status }}</span></td>
+        <td><span class="badge bg-{{ {'draft':'secondary','pending_approval':'warning text-dark','pending_confirmation':'warning text-dark','ordered':'primary','received':'success','cancelled':'danger'}[o.status] }}">{{ o.status.replace('_', ' ') }}</span></td>
         <td class="text-end">{{ o.total_amount|inr }}</td>
       </tr>
     {% endfor %}

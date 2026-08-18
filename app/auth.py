@@ -11,10 +11,8 @@ from app.models import User, RolePermission
 
 # Every module this app currently knows how to gate. A plain Python list
 # (not a DB enum) so adding a new one is a one-line change here, not a
-# migration — see Role/RolePermission in models.py. Only "items" is actually
-# wired into its router's routes so far (see app/routers/items.py); the
-# rest are listed here so they show up in the Roles admin UI ready to be
-# switched on module-by-module as each one gets the same treatment.
+# migration — see Role/RolePermission in models.py. All of these are wired
+# into their router's routes now (see each app/routers/<module>.py).
 MODULES = [
     ("customers", "Customers"),
     ("vendors", "Vendors"),
@@ -26,8 +24,19 @@ MODULES = [
 ]
 MODULE_KEYS = [key for key, _ in MODULES]
 
-NO_ACCESS = {"view": False, "add": False, "edit": False, "delete": False}
-FULL_ACCESS = {"view": True, "add": True, "edit": True, "delete": True}
+# "confirm" is a 5th action alongside the original view/add/edit/delete —
+# unlike those four, it's currently only meaningful for one module
+# (Purchase: confirm_purchase_order in app/routers/purchase.py, the step
+# between an admin's approval and a purchase order being downloadable).
+# It's still a plain column on every RolePermission row like the others
+# (see models.py) — simpler than a parallel one-off permission mechanism —
+# and shows up in the Roles admin UI for every module the same way "delete"
+# does even where nothing checks it yet, same as this app's existing
+# module-by-module rollout (see MODULES above).
+ACTIONS = ("view", "add", "edit", "delete", "confirm")
+
+NO_ACCESS = {"view": False, "add": False, "edit": False, "delete": False, "confirm": False}
+FULL_ACCESS = {"view": True, "add": True, "edit": True, "delete": True, "confirm": True}
 
 
 class NotAuthenticatedException(Exception):
@@ -76,9 +85,9 @@ class PermissionDeniedException(Exception):
 
 def get_user_module_permissions(user: User, db: Session, module: str) -> dict:
     """What `user` can do in `module`: {"view": bool, "add": bool, "edit": bool,
-    "delete": bool}. Admins always get full access. A staff user with no role
-    assigned, or a role with no row for this module, gets no access — denied
-    by default, rather than accidentally open."""
+    "delete": bool, "confirm": bool}. Admins always get full access. A staff
+    user with no role assigned, or a role with no row for this module, gets
+    no access — denied by default, rather than accidentally open."""
     if user.role == "admin":
         return dict(FULL_ACCESS)
     if not user.permission_role_id:
@@ -90,7 +99,10 @@ def get_user_module_permissions(user: User, db: Session, module: str) -> dict:
     )
     if not perm:
         return dict(NO_ACCESS)
-    return {"view": perm.can_view, "add": perm.can_add, "edit": perm.can_edit, "delete": perm.can_delete}
+    return {
+        "view": perm.can_view, "add": perm.can_add, "edit": perm.can_edit,
+        "delete": perm.can_delete, "confirm": perm.can_confirm,
+    }
 
 
 def require_module_permission(module: str, action: str):

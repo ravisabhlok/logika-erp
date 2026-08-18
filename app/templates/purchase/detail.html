@@ -7,7 +7,15 @@
     {% if order.status in ('draft', 'ordered', 'cancelled') and perms.edit %}
     <a href="/purchase/{{ order.id }}/edit" class="btn btn-outline-secondary btn-sm">Edit</a>
     {% endif %}
-    <span class="badge bg-{{ {'draft':'secondary','ordered':'primary','received':'success','cancelled':'danger'}[order.status] }} fs-6">{{ order.status }}</span>
+    {% if order.status in ('draft', 'pending_approval', 'cancelled') and perms.delete %}
+    <form method="post" action="/purchase/{{ order.id }}/delete" class="d-inline" onsubmit="return confirm('Delete {{ order.order_no }}? This cannot be undone.');">
+      <button class="btn btn-outline-danger btn-sm">Delete</button>
+    </form>
+    {% endif %}
+    {% if order.status in ('ordered', 'received') %}
+    <a href="/purchase/{{ order.id }}/pdf" target="_blank" class="btn btn-outline-primary btn-sm">Download PO</a>
+    {% endif %}
+    <span class="badge bg-{{ {'draft':'secondary','pending_approval':'warning text-dark','pending_confirmation':'warning text-dark','ordered':'primary','received':'success','cancelled':'danger'}[order.status] }} fs-6">{{ order.status.replace('_', ' ') }}</span>
   </div>
 </div>
 
@@ -22,28 +30,83 @@
       <div class="text-muted small mt-2">Currency</div>
       <div>{{ order.currency }} <span class="text-muted small">(ref. rate {{ order.exchange_rate }} / INR)</span></div>
       {% endif %}
+      {% if order.approved_by_user %}
+      <div class="text-muted small mt-2">Approved By</div>
+      <div>{{ order.approved_by_user.full_name or order.approved_by_user.username }} <span class="text-muted small">on {{ order.approved_at|dt('%d-%b-%Y') }}</span></div>
+      {% endif %}
+      {% if order.confirmed_by_user %}
+      <div class="text-muted small mt-2">Confirmed By</div>
+      <div>{{ order.confirmed_by_user.full_name or order.confirmed_by_user.username }} <span class="text-muted small">on {{ order.confirmed_at|dt('%d-%b-%Y') }}</span></div>
+      {% endif %}
     </div>
   </div>
   <div class="col-md-8">
     <div class="card p-3">
       <div class="text-muted small mb-2">Actions</div>
-      {% if not perms.edit %}
-      <span class="text-muted">No further actions.</span>
-      {% elif order.status == 'draft' %}
-      <form method="post" action="/purchase/{{ order.id }}/status" class="d-inline">
-        <input type="hidden" name="new_status" value="ordered">
-        <button class="btn btn-primary btn-sm">Mark Ordered</button>
-      </form>
-      <form method="post" action="/purchase/{{ order.id }}/status" class="d-inline">
-        <input type="hidden" name="new_status" value="cancelled">
-        <button class="btn btn-outline-danger btn-sm">Cancel</button>
-      </form>
+      {% if order.status == 'draft' %}
+        {% if perms.edit %}
+        <form method="post" action="/purchase/{{ order.id }}/send-for-approval" class="d-inline">
+          <button class="btn btn-primary btn-sm">Send for Approval</button>
+        </form>
+        <form method="post" action="/purchase/{{ order.id }}/status" class="d-inline">
+          <input type="hidden" name="new_status" value="cancelled">
+          <button class="btn btn-outline-danger btn-sm">Cancel</button>
+        </form>
+        {% else %}
+        <span class="text-muted">No further actions.</span>
+        {% endif %}
+      {% elif order.status == 'pending_approval' %}
+        <div class="mb-2">
+          <span class="badge bg-warning text-dark">Awaiting admin approval</span>
+        </div>
+        {% if user.role == 'admin' %}
+        <form method="post" action="/purchase/{{ order.id }}/approve" class="d-inline">
+          <button class="btn btn-success btn-sm">Approve</button>
+        </form>
+        <form method="post" action="/purchase/{{ order.id }}/reject" class="d-inline">
+          <button class="btn btn-outline-secondary btn-sm">Reject (back to Draft)</button>
+        </form>
+        {% endif %}
+        {% if perms.edit %}
+        <form method="post" action="/purchase/{{ order.id }}/status" class="d-inline">
+          <input type="hidden" name="new_status" value="cancelled">
+          <button class="btn btn-outline-danger btn-sm">Cancel</button>
+        </form>
+        {% endif %}
+        {% if user.role != 'admin' and not perms.edit %}
+        <span class="text-muted">No further actions.</span>
+        {% endif %}
+      {% elif order.status == 'pending_confirmation' %}
+        <div class="mb-2">
+          <span class="badge bg-warning text-dark">Awaiting confirmation</span>
+        </div>
+        {% if perms.confirm %}
+        <form method="post" action="/purchase/{{ order.id }}/confirm" class="d-inline">
+          <button class="btn btn-success btn-sm">Confirm</button>
+        </form>
+        <form method="post" action="/purchase/{{ order.id }}/reject-confirmation" class="d-inline">
+          <button class="btn btn-outline-secondary btn-sm">Reject (back to Draft)</button>
+        </form>
+        {% endif %}
+        {% if perms.edit %}
+        <form method="post" action="/purchase/{{ order.id }}/status" class="d-inline">
+          <input type="hidden" name="new_status" value="cancelled">
+          <button class="btn btn-outline-danger btn-sm">Cancel</button>
+        </form>
+        {% endif %}
+        {% if not perms.confirm and not perms.edit %}
+        <span class="text-muted">No further actions.</span>
+        {% endif %}
       {% elif order.status == 'ordered' %}
-      <a href="/purchase/{{ order.id }}/receive" class="btn btn-success btn-sm">Receive Order</a>
-      <form method="post" action="/purchase/{{ order.id }}/status" class="d-inline">
-        <input type="hidden" name="new_status" value="cancelled">
-        <button class="btn btn-outline-danger btn-sm">Cancel</button>
-      </form>
+        {% if perms.edit %}
+        <a href="/purchase/{{ order.id }}/receive" class="btn btn-success btn-sm">Receive Order</a>
+        <form method="post" action="/purchase/{{ order.id }}/status" class="d-inline">
+          <input type="hidden" name="new_status" value="cancelled">
+          <button class="btn btn-outline-danger btn-sm">Cancel</button>
+        </form>
+        {% else %}
+        <span class="text-muted">No further actions.</span>
+        {% endif %}
       {% else %}
       <span class="text-muted">No further actions.</span>
       {% endif %}

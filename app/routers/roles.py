@@ -4,7 +4,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.auth import require_admin, MODULES
+from app.auth import require_admin, MODULES, ACTIONS
 from app.models import Role, RolePermission, User
 from app.audit import log_action, log_field_changes
 
@@ -22,21 +22,27 @@ async def build_permissions(request: Request) -> list[RolePermission]:
     for module_key, _ in MODULES:
         flags = {
             action: form.get(f"perm_{module_key}_{action}") == "on"
-            for action in ("view", "add", "edit", "delete")
+            for action in ACTIONS
         }
         if any(flags.values()):
             permissions.append(RolePermission(
                 module=module_key,
                 can_view=flags["view"], can_add=flags["add"],
                 can_edit=flags["edit"], can_delete=flags["delete"],
+                can_confirm=flags["confirm"],
             ))
     return permissions
 
 
 def _perm_flags(perm: RolePermission) -> str:
-    """'view,add,edit,delete' -> just the ones that are actually on, e.g.
-    'view,edit', or 'none' if the module has no access at all."""
-    flags = [name for name, on in (("view", perm.can_view), ("add", perm.can_add), ("edit", perm.can_edit), ("delete", perm.can_delete)) if on]
+    """'view,add,edit,delete,confirm' -> just the ones that are actually on,
+    e.g. 'view,edit', or 'none' if the module has no access at all."""
+    flags = [
+        name for name, on in (
+            ("view", perm.can_view), ("add", perm.can_add), ("edit", perm.can_edit),
+            ("delete", perm.can_delete), ("confirm", perm.can_confirm),
+        ) if on
+    ]
     return ",".join(flags) if flags else "none"
 
 
@@ -112,7 +118,10 @@ async def update_role(
     role = db.query(Role).get(role_id)
     old_name = role.name
     old_permissions = [
-        RolePermission(module=p.module, can_view=p.can_view, can_add=p.can_add, can_edit=p.can_edit, can_delete=p.can_delete)
+        RolePermission(
+            module=p.module, can_view=p.can_view, can_add=p.can_add, can_edit=p.can_edit,
+            can_delete=p.can_delete, can_confirm=p.can_confirm,
+        )
         for p in role.permissions
     ]  # detached copies — role.permissions itself is about to be deleted below
     role.name = name.strip()

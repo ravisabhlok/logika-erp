@@ -19,6 +19,7 @@
             <th class="text-center" style="width:70px;">Add</th>
             <th class="text-center" style="width:70px;">Edit</th>
             <th class="text-center" style="width:70px;">Delete</th>
+            <th class="text-center" style="width:70px;">Confirm</th>
           </tr>
         </thead>
         <tbody>
@@ -30,12 +31,18 @@
             <td class="text-center"><input type="checkbox" class="form-check-input" name="perm_{{ module_key }}_add" {% if p and p.can_add %}checked{% endif %}></td>
             <td class="text-center"><input type="checkbox" class="form-check-input" name="perm_{{ module_key }}_edit" {% if p and p.can_edit %}checked{% endif %}></td>
             <td class="text-center"><input type="checkbox" class="form-check-input" name="perm_{{ module_key }}_delete" {% if p and p.can_delete %}checked{% endif %}></td>
+            <td class="text-center"><input type="checkbox" class="form-check-input" name="perm_{{ module_key }}_confirm" {% if p and p.can_confirm %}checked{% endif %}></td>
           </tr>
         {% endfor %}
         </tbody>
       </table>
     </div>
-    <div class="form-text mb-3">Only <strong>Items</strong> is currently enforced app-wide — the other modules are here ready to switch on later. Admin users always have full access regardless of this table.</div>
+    <div class="form-text mb-3">
+      View/Add/Edit/Delete are enforced across every module above. <strong>Confirm</strong> currently only does
+      something for <strong>Purchase</strong> — it's the second sign-off on a Purchase Order after an Admin's
+      approval, done by whoever holds it (see Purchase Orders). It shows up here for every module for consistency,
+      but has no effect anywhere else yet. Admin users always have full access regardless of this table.
+    </div>
 
     <button type="submit" class="btn btn-dark">Save</button>
     <a href="/roles" class="btn btn-link">Cancel</a>
