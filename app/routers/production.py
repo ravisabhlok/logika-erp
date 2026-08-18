@@ -1,3 +1,5 @@
+import re
+
 from fastapi import APIRouter, Request, Depends, Form
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -6,7 +8,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
 from app.auth import require_module_permission, get_user_module_permissions
 from app.formatting import format_qty, format_dt
-from app.models import ProductionOrder, ProductionOrderComponent, Item, StockTransaction, User
+from app.models import ProductionOrder, ProductionOrderComponent, Item, StockTransaction, ItemSerial, User
 
 router = APIRouter(prefix="/production", tags=["production"])
 templates = Jinja2Templates(directory="app/templates")
@@ -88,6 +90,7 @@ def view_production_order(order_id: int, request: Request, db: Session = Depends
         .options(
             joinedload(ProductionOrder.item),
             joinedload(ProductionOrder.components).joinedload(ProductionOrderComponent.component_item),
+            joinedload(ProductionOrder.serials),
         )
         .get(order_id)
     )
@@ -95,8 +98,46 @@ def view_production_order(order_id: int, request: Request, db: Session = Depends
     return templates.TemplateResponse("production/detail.html", {"request": request, "user": user, "order": order, "error": None, "perms": perms})
 
 
+def _split_serials(raw: str) -> list[str]:
+    """Split a textarea of serial numbers on commas and/or newlines. Same
+    helper as app/routers/purchase.py's — kept local rather than shared
+    since it's five lines and this app doesn't otherwise have a shared
+    utils module to put it in."""
+    parts = re.split(r"[\n,]+", raw or "")
+    return [p.strip() for p in parts if p.strip()]
+
+
+@router.get("/{order_id}/complete")
+def complete_form(order_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(require_module_permission("production", "edit"))):
+    """Serial-capture confirmation page — only reached (via a link, not a
+    plain form button) when the finished item is has_serial, mirroring how
+    Purchase receiving always asks for serials on the way in. A
+    non-serialized item has nothing to enter here, so it keeps completing
+    in one click straight from the detail page's button; hitting this URL
+    directly for one just bounces back rather than showing a pointless
+    empty form."""
+    order = (
+        db.query(ProductionOrder)
+        .options(
+            joinedload(ProductionOrder.item),
+            joinedload(ProductionOrder.components).joinedload(ProductionOrderComponent.component_item),
+        )
+        .get(order_id)
+    )
+    if not order:
+        return RedirectResponse(url="/production?error=Production order not found", status_code=303)
+    if order.status != "draft":
+        return RedirectResponse(url=f"/production/{order_id}?error=Only draft orders can be completed", status_code=303)
+    if not order.item.has_serial:
+        return RedirectResponse(url=f"/production/{order_id}", status_code=303)
+    return templates.TemplateResponse(
+        "production/complete.html",
+        {"request": request, "user": user, "order": order, "error": None, "submitted": ""},
+    )
+
+
 @router.post("/{order_id}/complete")
-def complete_production_order(order_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(require_module_permission("production", "edit"))):
+async def complete_production_order(order_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(require_module_permission("production", "edit"))):
     order = (
         db.query(ProductionOrder)
         .options(
@@ -126,6 +167,37 @@ def complete_production_order(order_id: int, request: Request, db: Session = Dep
             status_code=400,
         )
 
+    # Serialized finished items need one serial number captured per unit
+    # being built here, same as a serialized item captures one per unit on
+    # the way IN via Purchase receiving — this is that same capture, just
+    # for a built (not bought) unit. Validated independently of whether the
+    # request came from the GET confirmation page above, so a re-POST of a
+    # stale form (or a direct POST) can't skip it.
+    serials = []
+    raw_serials = ""
+    if order.item.has_serial:
+        form = await request.form()
+        raw_serials = form.get("serials", "")
+        serials = _split_serials(raw_serials)
+        error = None
+        if len(serials) != order.quantity:
+            error = f"Expected {order.quantity} serial number(s), got {len(serials)}."
+        elif len(set(serials)) != len(serials):
+            error = "Duplicate serial numbers entered."
+        else:
+            existing = {
+                s for (s,) in db.query(ItemSerial.serial_number).filter(ItemSerial.item_id == order.item_id).all()
+            }
+            clashes = existing.intersection(serials)
+            if clashes:
+                error = f"Already recorded for this item: {', '.join(sorted(clashes))}"
+        if error:
+            return templates.TemplateResponse(
+                "production/complete.html",
+                {"request": request, "user": user, "order": order, "error": error, "submitted": raw_serials},
+                status_code=400,
+            )
+
     for line in order.components:
         component = db.query(Item).get(line.component_item_id)
         component.current_stock -= line.quantity_required
@@ -142,6 +214,10 @@ def complete_production_order(order_id: int, request: Request, db: Session = Dep
         reference_type="production_order", reference_id=order.id,
         notes=f"Built via {order.order_no}",
     ))
+    for serial in serials:
+        db.add(ItemSerial(
+            item_id=finished.id, serial_number=serial, production_order_id=order.id,
+        ))
 
     order.status = "completed"
     db.commit()

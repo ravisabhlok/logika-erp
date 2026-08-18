@@ -480,6 +480,13 @@ class ProductionOrder(Base):
 
     item = relationship("Item", foreign_keys=[item_id])
     components = relationship("ProductionOrderComponent", back_populates="production_order", cascade="all, delete-orphan")
+    # Serial numbers captured for the finished item when this order is
+    # completed (only populated for a has_serial item — see
+    # complete_production_order). Not cascade="delete-orphan": there's no
+    # delete route for a ProductionOrder today, but even if there were,
+    # a captured serial is inventory-audit data, not something that should
+    # silently vanish alongside its originating order.
+    serials = relationship("ItemSerial", back_populates="production_order")
 
 
 class ProductionOrderComponent(Base):
@@ -517,8 +524,19 @@ class StockTransaction(Base):
 
 
 class ItemSerial(Base):
-    """One row per physical unit of a serialized item, captured at the time
-    a purchase order is received (goods receipt)."""
+    """One row per physical unit of a serialized item — captured either when
+    a Purchase Order is received (goods receipt: `purchase_order_id` /
+    `purchase_order_item_id`) or when a Production Order is completed
+    (built in-house rather than bought: `production_order_id`, set by
+    `complete_production_order`). Exactly one of those two origins is set
+    per row in practice — nothing enforces that with a DB constraint (see
+    this app's general style of validating in the route, not the schema),
+    but the two capture flows each only ever populate their own side.
+
+    Still only inbound: nothing here yet records which serial went *out*
+    on a sale — see CLAUDE.md's "Known scope" note; that's a Sales/Invoice
+    side gap, not a Production/Purchase one.
+    """
     __tablename__ = "item_serials"
     __table_args__ = (UniqueConstraint("item_id", "serial_number", name="uq_item_serial"),)
 
@@ -527,8 +545,70 @@ class ItemSerial(Base):
     serial_number = Column(String(120), nullable=False)
     purchase_order_id = Column(Integer, ForeignKey("purchase_orders.id"), nullable=True)
     purchase_order_item_id = Column(Integer, ForeignKey("purchase_order_items.id"), nullable=True)
+    production_order_id = Column(Integer, ForeignKey("production_orders.id"), nullable=True)
     received_at = Column(DateTime, default=datetime.utcnow)
 
     item = relationship("Item")
     purchase_order = relationship("PurchaseOrder")
     purchase_order_item = relationship("PurchaseOrderItem", back_populates="serials")
+    production_order = relationship("ProductionOrder", back_populates="serials")
+
+
+# ---------------------------------------------------------------------------
+# Audit log
+# ---------------------------------------------------------------------------
+
+class AuditLog(Base):
+    """One row per changed field on a tracked mutation — editing a Purchase
+    Order's vendor and one line's price produces two rows sharing the same
+    (entity_type, entity_id, action, created_at) grouping, one per field.
+    A create/delete/status-change/receive-style event that isn't really a
+    field-by-field diff gets exactly one row instead, with `field_name` left
+    null and a short human-readable note in `new_value` (see
+    app/audit.py:log_action).
+
+    Deliberately explicit-per-route — every mutating route that's in scope
+    calls into app/audit.py itself, right where it makes the change — rather
+    than a generic SQLAlchemy `before_flush` hook that would fire for every
+    column on every table. Same reasoning as this app's other transactional
+    writes (StockTransaction, ItemSerial): a global hook can't easily attach
+    a human-readable `entity_label`, can't tell "changed via the Edit form"
+    apart from "system recomputed a total", and would need an equally
+    explicit allow-list to avoid logging incidental columns nobody asked to
+    track anyway. See CLAUDE.md's established pattern.
+
+    Only wired into the high-value areas agreed on first: Items (pricing/
+    stock-affecting fields), Sales Orders and Purchase Orders (including
+    status transitions and receiving), Inventory manual adjustments, and
+    Users/Roles (permission changes). Customers, Vendors, and Production
+    aren't covered yet — a deliberate first-pass scope, not an oversight;
+    extend the same way (call log_field_changes/log_action from the route)
+    if/when those need it too.
+
+    `username` is a point-in-time snapshot (not just a FK join) so a log
+    entry still reads correctly even if the user's account is later renamed
+    — same "snapshot at the moment of the action" convention as
+    SalesOrderItem.unit_price. `entity_label` is the same idea for the
+    record itself (e.g. an order's order_no, an item's name at the time),
+    so the log stays readable without a join even if the underlying row is
+    later deleted (items can be, per get_item_delete_blockers) or renamed.
+
+    Values are always stored as plain strings (str() of whatever the field
+    held) — this is a human-readable log for staff to review, not a typed
+    replay/undo mechanism.
+    """
+    __tablename__ = "audit_logs"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    username = Column(String(80), nullable=True)
+    entity_type = Column(String(50), nullable=False, index=True)
+    entity_id = Column(Integer, nullable=False, index=True)
+    entity_label = Column(String(200), nullable=True)
+    action = Column(String(30), nullable=False)
+    field_name = Column(String(80), nullable=True)
+    old_value = Column(Text, nullable=True)
+    new_value = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    user = relationship("User")

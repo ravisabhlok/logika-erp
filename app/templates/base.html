@@ -70,6 +70,9 @@
       <a href="/users" class="nav-item {{ 'active' if request.url.path.startswith('/users') or request.url.path.startswith('/roles') else '' }}">
         <i class="bi bi-shield-lock"></i><span>Roles &amp; Users</span>
       </a>
+      <a href="/audit" class="nav-item {{ 'active' if request.url.path.startswith('/audit') else '' }}">
+        <i class="bi bi-clock-history"></i><span>Audit Log</span>
+      </a>
       {% endif %}
     </nav>
 

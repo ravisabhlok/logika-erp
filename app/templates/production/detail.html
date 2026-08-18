@@ -25,9 +25,13 @@
     <div class="card p-3">
       <div class="text-muted small mb-2">Actions</div>
       {% if order.status == 'draft' and perms.edit %}
+      {% if order.item.has_serial %}
+      <a href="/production/{{ order.id }}/complete" class="btn btn-success btn-sm">Complete (consumes components, adds finished stock)</a>
+      {% else %}
       <form method="post" action="/production/{{ order.id }}/complete" class="d-inline" onsubmit="return confirm('This will consume the components below and add finished stock. Continue?');">
         <button class="btn btn-success btn-sm">Complete (consumes components, adds finished stock)</button>
       </form>
+      {% endif %}
       <form method="post" action="/production/{{ order.id }}/cancel" class="d-inline">
         <button class="btn btn-outline-danger btn-sm">Cancel</button>
       </form>
@@ -54,4 +58,11 @@
     </tbody>
   </table>
 </div>
+
+{% if order.item.has_serial and order.serials %}
+<div class="card p-3 mt-3">
+  <div class="text-muted small">Serial Numbers — {{ order.item.name }}</div>
+  <div>{{ order.serials|map(attribute='serial_number')|join(', ') }}</div>
+</div>
+{% endif %}
 {% endblock %}

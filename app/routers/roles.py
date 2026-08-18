@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.auth import require_admin, MODULES
 from app.models import Role, RolePermission, User
+from app.audit import log_action, log_field_changes
 
 router = APIRouter(prefix="/roles", tags=["roles"])
 templates = Jinja2Templates(directory="app/templates")
@@ -32,6 +33,33 @@ async def build_permissions(request: Request) -> list[RolePermission]:
     return permissions
 
 
+def _perm_flags(perm: RolePermission) -> str:
+    """'view,add,edit,delete' -> just the ones that are actually on, e.g.
+    'view,edit', or 'none' if the module has no access at all."""
+    flags = [name for name, on in (("view", perm.can_view), ("add", perm.can_add), ("edit", perm.can_edit), ("delete", perm.can_delete)) if on]
+    return ",".join(flags) if flags else "none"
+
+
+def _perm_map(permissions: list[RolePermission]) -> dict:
+    return {p.module: p for p in permissions}
+
+
+def _diff_permissions(old_permissions: list[RolePermission], new_permissions: list[RolePermission]) -> dict:
+    """{module: (old_flags_str, new_flags_str)} for every module whose
+    access actually changed between the two permission sets — a module
+    missing from a list means no access at all for that module, same as
+    get_user_module_permissions' default-deny behaviour."""
+    old_map = _perm_map(old_permissions)
+    new_map = _perm_map(new_permissions)
+    changes = {}
+    for module_key, module_label in MODULES:
+        old_str = _perm_flags(old_map[module_key]) if module_key in old_map else "none"
+        new_str = _perm_flags(new_map[module_key]) if module_key in new_map else "none"
+        if old_str != new_str:
+            changes[f"permissions.{module_key}"] = (old_str, new_str)
+    return changes
+
+
 @router.get("")
 def list_roles(request: Request, db: Session = Depends(get_db), user: User = Depends(require_admin)):
     roles = db.query(Role).order_by(Role.name).all()
@@ -56,6 +84,9 @@ async def create_role(
     role = Role(name=name.strip())
     role.permissions = await build_permissions(request)
     db.add(role)
+    db.flush()  # need role.id before logging
+    log_action(db, user, "role", role.id, role.name, "create", summary=f"Created with {len(role.permissions)} module permission(s) set")
+    log_field_changes(db, user, "role", role.id, role.name, _diff_permissions([], role.permissions))
     db.commit()
     return RedirectResponse(url="/roles?success=Role created", status_code=303)
 
@@ -79,6 +110,11 @@ async def update_role(
     user: User = Depends(require_admin),
 ):
     role = db.query(Role).get(role_id)
+    old_name = role.name
+    old_permissions = [
+        RolePermission(module=p.module, can_view=p.can_view, can_add=p.can_add, can_edit=p.can_edit, can_delete=p.can_delete)
+        for p in role.permissions
+    ]  # detached copies — role.permissions itself is about to be deleted below
     role.name = name.strip()
     new_permissions = await build_permissions(request)
     # Delete the old rows and flush before inserting the new ones — replacing
@@ -88,6 +124,9 @@ async def update_role(
     db.query(RolePermission).filter(RolePermission.role_id == role_id).delete()
     db.flush()
     role.permissions = new_permissions
+    if role.name != old_name:
+        log_field_changes(db, user, "role", role.id, role.name, {"name": (old_name, role.name)})
+    log_field_changes(db, user, "role", role.id, role.name, _diff_permissions(old_permissions, new_permissions))
     db.commit()
     return RedirectResponse(url="/roles?success=Role updated", status_code=303)
 
@@ -103,6 +142,7 @@ def delete_role(role_id: int, db: Session = Depends(get_db), user: User = Depend
                 url=f"/roles?error=Can't delete '{role.name}' — still assigned to: {names}. Reassign them first.",
                 status_code=303,
             )
+        log_action(db, user, "role", role.id, role.name, "delete", summary=f"Deleted '{role.name}'")
         db.delete(role)
         db.commit()
     return RedirectResponse(url="/roles?success=Role deleted", status_code=303)

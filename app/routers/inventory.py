@@ -9,6 +9,7 @@ from app.database import get_db
 from app.auth import require_module_permission, get_user_module_permissions
 from app.formatting import format_qty, format_dt
 from app.models import Item, StockTransaction, ItemSerial, User
+from app.audit import log_action
 
 router = APIRouter(prefix="/inventory", tags=["inventory"])
 templates = Jinja2Templates(directory="app/templates")
@@ -48,6 +49,7 @@ def submit_adjustment(
 ):
     item = db.query(Item).get(item_id)
     if quantity > 0:
+        old_stock = float(item.current_stock or 0)
         # current_stock comes back from SQLAlchemy as Decimal (Numeric(14,4)
         # column) — Python refuses to mix Decimal and float in arithmetic
         # (raises TypeError), so cast to float first, same as the Decimal
@@ -63,6 +65,11 @@ def submit_adjustment(
             reference_type="manual",
             notes=(f"{'Increase' if direction != 'decrease' else 'Decrease'} by {user.username}: {notes}").strip(),
         ))
+        log_action(
+            db, user, "item", item.id, item.name, "adjust",
+            summary=f"Manual {'decrease' if direction == 'decrease' else 'increase'} of {quantity:g}: {old_stock:g} -> {float(item.current_stock):g}"
+            + (f" ({notes})" if notes else ""),
+        )
         db.commit()
     return RedirectResponse(url="/inventory?success=Stock adjusted", status_code=303)
 
@@ -186,6 +193,10 @@ async def add_serials(
     # ledger (Purchase receive / Sales delivery / Manual Adjustment).
     for serial in new_serials:
         db.add(ItemSerial(item_id=item.id, serial_number=serial))
+    log_action(
+        db, user, "item", item.id, item.name, "add_serials",
+        summary=f"Added {len(new_serials)} serial number(s): {', '.join(new_serials)}",
+    )
     db.commit()
     return RedirectResponse(url=f"/inventory/{item_id}/serials?success=Added {len(new_serials)} serial number(s)", status_code=303)
 
@@ -238,7 +249,10 @@ async def update_serial(
             status_code=400,
         )
 
+    old_value = serial.serial_number
     serial.serial_number = new_value
+    if new_value != old_value:
+        log_action(db, user, "item_serial", serial.id, item.name, "update", summary=f"{old_value} -> {new_value}")
     db.commit()
     return RedirectResponse(url=f"/inventory/{item_id}/serials?success=Serial number updated", status_code=303)
 
@@ -250,6 +264,7 @@ def delete_serial(
 ):
     serial = db.query(ItemSerial).get(serial_id)
     if serial and serial.item_id == item_id:
+        log_action(db, user, "item_serial", serial.id, serial.item.name, "delete", summary=f"Deleted serial '{serial.serial_number}'")
         db.delete(serial)
         db.commit()
     return RedirectResponse(url=f"/inventory/{item_id}/serials?success=Serial number deleted", status_code=303)

@@ -17,6 +17,7 @@ from app.models import (
     ProductionOrderComponent, ItemSerial,
 )
 from app.requirements import item_sales_demand, on_order_qty
+from app.audit import diff_fields, log_field_changes, log_action
 
 router = APIRouter(prefix="/items", tags=["items"])
 templates = Jinja2Templates(directory="app/templates")
@@ -183,6 +184,8 @@ async def create_item(
             item, form.getlist("component_item_id"), form.getlist("component_quantity"),
         )
     db.add(item)
+    db.flush()  # need item.id before logging
+    log_action(db, user, "item", item.id, item.name, "create", summary=f"Created ({item.unit}, sales price {item.sales_price})")
     db.commit()
     return RedirectResponse(url=f"/items/{item.id}?success=Item created", status_code=303)
 
@@ -295,6 +298,29 @@ async def update_item(
 ):
     form = await request.form()
     item = db.query(Item).get(item_id)
+
+    # Field-level diff captured against the *current* row before anything is
+    # overwritten — covers pricing/stock-relevant fields plus the rest of
+    # the editable columns; categories and bom_components are relationship
+    # collections (not plain scalars) so they're compared separately below.
+    old_category_names = sorted(c.name for c in item.categories)
+    old_component_count = len(item.bom_components)
+
+    changes = diff_fields(item, {
+        "name": name,
+        "description": description,
+        "small_description": small_description.strip() or None,
+        "unit": unit,
+        "hsn_code": hsn_code.strip() or None,
+        "gst_percentage": gst_percentage,
+        "purchase_price": purchase_price,
+        "sales_price": sales_price,
+        "reorder_level": reorder_level,
+        "has_serial": has_serial,
+        "is_assembly": is_assembly,
+        "is_active": is_active,
+    })
+
     item.name = name
     item.description = description
     item.small_description = small_description.strip() or None
@@ -312,6 +338,15 @@ async def update_item(
         if is_assembly else []
     )
     item.is_active = is_active
+
+    new_category_names = sorted(c.name for c in item.categories)
+    if new_category_names != old_category_names:
+        changes["categories"] = (", ".join(old_category_names) or "(none)", ", ".join(new_category_names) or "(none)")
+    new_component_count = len(item.bom_components)
+    if new_component_count != old_component_count:
+        changes["bom_components"] = (f"{old_component_count} component(s)", f"{new_component_count} component(s)")
+
+    log_field_changes(db, user, "item", item.id, item.name, changes)
     db.commit()
     return RedirectResponse(url=f"/items/{item_id}?success=Item updated", status_code=303)
 
@@ -335,6 +370,7 @@ def delete_item(item_id: int, db: Session = Depends(get_db), user: User = Depend
         if os.path.exists(file_path):
             os.remove(file_path)
     try:
+        log_action(db, user, "item", item.id, item.name, "delete", summary=f"Deleted '{item.name}'")
         db.delete(item)
         db.commit()
     except IntegrityError:

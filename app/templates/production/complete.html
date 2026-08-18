@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Complete {{ order.order_no }}{% endblock %}
+{% block content %}
+<h4 class="mb-3">Complete {{ order.order_no }}</h4>
+<p class="text-muted">
+  Building {{ order.quantity|qty }}x {{ order.item.name }} — this item is serialized, so enter
+  one serial number per unit being produced. Confirming will consume the components below and
+  add finished, serialized stock.
+</p>
+
+<div class="card p-4">
+  <form method="post" action="/production/{{ order.id }}/complete">
+    <div class="mb-3">
+      <label class="form-label">Serial Numbers ({{ order.quantity|qty }} required)</label>
+      <textarea name="serials" class="form-control {{ 'is-invalid' if error else '' }}" rows="4"
+                placeholder="Enter {{ order.quantity|qty }} serial number(s), one per line or comma-separated">{{ submitted or '' }}</textarea>
+      {% if error %}
+      <div class="invalid-feedback d-block">{{ error }}</div>
+      {% endif %}
+    </div>
+
+    <table class="table table-sm mb-3">
+      <thead><tr><th>Component</th><th class="text-end">Required</th><th class="text-end">Current Stock</th></tr></thead>
+      <tbody>
+      {% for line in order.components %}
+        <tr>
+          <td>{{ line.component_item.name }}</td>
+          <td class="text-end">{{ line.quantity_required|qty }}</td>
+          <td class="text-end">{{ line.component_item.current_stock|qty }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+
+    <button type="submit" class="btn btn-success">Confirm Completion (consumes components, adds finished stock)</button>
+    <a href="/production/{{ order.id }}" class="btn btn-link">Cancel</a>
+  </form>
+</div>
+{% endblock %}

@@ -14,6 +14,7 @@ from app.database import get_db
 from app.auth import require_login, require_module_permission, get_user_module_permissions
 from app.formatting import format_qty, format_inr, format_dt
 from app.models import SalesOrder, SalesOrderItem, SalesOrderPaymentTerm, Customer, Item, StockTransaction, User, Company
+from app.audit import diff_fields, log_field_changes, log_action
 
 router = APIRouter(prefix="/sales", tags=["sales"])
 templates = Jinja2Templates(directory="app/templates")
@@ -223,6 +224,11 @@ async def create_sales_order(request: Request, db: Session = Depends(get_db), us
 
     order.total_amount = total
     order.gst_amount = gst_total
+    db.flush()  # need order.id before logging
+    log_action(
+        db, user, "sales_order", order.id, order.order_no, "create",
+        summary=f"Created for {order.customer.name if order.customer else order.customer_id} — {len(order.items)} line(s), total {order.total_amount}",
+    )
     db.commit()
     return RedirectResponse(url=f"/sales/{order.id}", status_code=303)
 
@@ -497,6 +503,20 @@ async def update_sales_order(order_id: int, request: Request, db: Session = Depe
             status_code=400,
         )
 
+    changes = diff_fields(order, {
+        "customer_id": customer_id,
+        "order_no": order_no or order.order_no,
+        "notes": notes,
+        "customer_po_no": customer_po_no or None,
+        "customer_po_date": _parse_date(customer_po_date),
+        "expected_shipment_date": _parse_date(expected_shipment_date),
+        "billing_address": billing_address or None,
+        "shipping_address": shipping_address or None,
+        "ship_to_customer_id": int(ship_to_customer_id_str) if ship_to_customer_id_str.isdigit() else None,
+    })
+    old_line_count = len(order.items)
+    old_total = order.total_amount
+
     order.customer_id = customer_id
     # Order No is a required column — if the field somehow arrives blank,
     # keep the existing number rather than leaving the order without one.
@@ -532,11 +552,18 @@ async def update_sales_order(order_id: int, request: Request, db: Session = Depe
 
     order.total_amount = total
     order.gst_amount = gst_total
+    if len(order.items) != old_line_count or order.total_amount != old_total:
+        changes["line_items"] = (
+            f"{old_line_count} line(s), total {old_total}",
+            f"{len(order.items)} line(s), total {order.total_amount}",
+        )
     if was_cancelled:
         # Editing a cancelled order means it's being revived — send it back
         # through the normal lifecycle rather than leaving it edited but
         # still marked cancelled.
+        changes["status"] = ("cancelled", "draft")
         order.status = "draft"
+    log_field_changes(db, user, "sales_order", order.id, order.order_no, changes)
     db.commit()
     success_msg = "Sales order updated" + (" and moved back to draft" if was_cancelled else "")
     return RedirectResponse(url=f"/sales/{order_id}?success={success_msg}", status_code=303)
@@ -550,6 +577,7 @@ def update_sales_status(
     user: User = Depends(require_module_permission("sales", "edit")),
 ):
     order = db.query(SalesOrder).options(joinedload(SalesOrder.items)).get(order_id)
+    old_status = order.status
 
     if new_status == "delivered" and order.status != "delivered":
         # Deduct stock and log a stock-out transaction for each line item.
@@ -563,6 +591,8 @@ def update_sales_status(
             ))
 
     order.status = new_status
+    if new_status != old_status:
+        log_action(db, user, "sales_order", order.id, order.order_no, "status_change", summary=f"{old_status} -> {new_status}")
     db.commit()
     return RedirectResponse(url=f"/sales/{order_id}?success=Status updated", status_code=303)
 
@@ -606,11 +636,17 @@ def update_payment_term_status(
         .first()
     )
     if term and new_status in ("pending", "received"):
+        old_status = term.status
         term.status = new_status
         if new_status == "received":
             term.received_date = _parse_date(received_date) or datetime.utcnow()
         else:
             term.received_date = None
+        if new_status != old_status:
+            log_action(
+                db, user, "sales_order_payment_term", term.id, f"{term.sales_order.order_no}: {term.description}",
+                "status_change", summary=f"{old_status} -> {new_status}",
+            )
         db.commit()
 
     if request.headers.get("x-requested-with") == "XMLHttpRequest":

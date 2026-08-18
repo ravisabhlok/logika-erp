@@ -18,6 +18,7 @@ from app.models import (
     PurchaseOrder, PurchaseOrderItem, Vendor, Item, StockTransaction, ItemSerial, User,
 )
 from app.requirements import compute_demand_map, on_order_qty, last_vendor
+from app.audit import diff_fields, log_field_changes, log_action
 
 router = APIRouter(prefix="/purchase", tags=["purchase"])
 templates = Jinja2Templates(directory="app/templates")
@@ -208,6 +209,11 @@ async def create_purchase_order(request: Request, db: Session = Depends(get_db),
         ))
 
     order.total_amount = total
+    db.flush()  # need order.id before logging
+    log_action(
+        db, user, "purchase_order", order.id, order.order_no, "create",
+        summary=f"Created for {order.vendor.name if order.vendor else order.vendor_id} — {len(order.items)} line(s), total {order.currency} {order.total_amount}",
+    )
     db.commit()
     return RedirectResponse(url=f"/purchase/{order.id}", status_code=303)
 
@@ -306,6 +312,15 @@ async def update_purchase_order(order_id: int, request: Request, db: Session = D
     if exchange_rate <= 0:
         exchange_rate = 1
 
+    changes = diff_fields(order, {
+        "vendor_id": vendor_id,
+        "notes": notes,
+        "currency": currency,
+        "exchange_rate": exchange_rate,
+    })
+    old_line_count = len(order.items)
+    old_total = order.total_amount
+
     order.vendor_id = vendor_id
     order.notes = notes
     order.currency = currency
@@ -328,11 +343,18 @@ async def update_purchase_order(order_id: int, request: Request, db: Session = D
         ))
 
     order.total_amount = total
+    if len(order.items) != old_line_count or order.total_amount != old_total:
+        changes["line_items"] = (
+            f"{old_line_count} line(s), total {old_total}",
+            f"{len(order.items)} line(s), total {order.total_amount}",
+        )
     if was_cancelled:
         # Editing a cancelled order means it's being revived — send it back
         # through the normal lifecycle rather than leaving it edited but
         # still marked cancelled.
+        changes["status"] = ("cancelled", "draft")
         order.status = "draft"
+    log_field_changes(db, user, "purchase_order", order.id, order.order_no, changes)
     db.commit()
     success_msg = "Purchase order updated" + (" and moved back to draft" if was_cancelled else "")
     return RedirectResponse(url=f"/purchase/{order_id}?success={success_msg}", status_code=303)
@@ -350,7 +372,10 @@ def update_purchase_status(
         return RedirectResponse(url=f"/purchase/{order_id}/receive", status_code=303)
 
     order = db.query(PurchaseOrder).get(order_id)
+    old_status = order.status
     order.status = new_status
+    if new_status != old_status:
+        log_action(db, user, "purchase_order", order.id, order.order_no, "status_change", summary=f"{old_status} -> {new_status}")
     db.commit()
     return RedirectResponse(url=f"/purchase/{order_id}?success=Status updated", status_code=303)
 
@@ -451,5 +476,9 @@ async def receive_purchase_order(order_id: int, request: Request, db: Session = 
             ))
 
     order.status = "received"
+    log_action(
+        db, user, "purchase_order", order.id, order.order_no, "receive",
+        summary=f"Received — {len(order.items)} line(s), stock and serials updated",
+    )
     db.commit()
     return RedirectResponse(url=f"/purchase/{order_id}?success=Order received and stock updated", status_code=303)

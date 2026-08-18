@@ -8,7 +8,7 @@ from app.config import settings
 from app.auth import NotAuthenticatedException, PermissionDeniedException, get_current_user
 from app.routers import (
     auth_router, dashboard, customers, vendors, items, sales, purchase, inventory,
-    production, roles, users,
+    production, roles, users, audit,
 )
 
 app = FastAPI(title="Logika Systems ERP")
@@ -51,3 +51,4 @@ app.include_router(inventory.router)
 app.include_router(production.router)
 app.include_router(roles.router)
 app.include_router(users.router)
+app.include_router(audit.router)

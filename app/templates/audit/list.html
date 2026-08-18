@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Audit Log{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">Audit Log</h4>
+</div>
+
+<div class="card p-3 mb-3">
+  <form method="get" class="row g-2 align-items-end">
+    <div class="col-md-4">
+      <label class="form-label small text-muted mb-1">Area</label>
+      <select name="entity_type" class="form-select form-select-sm">
+        <option value="">All areas</option>
+        {% for key, label in entity_types %}
+        <option value="{{ key }}" {{ 'selected' if entity_type == key else '' }}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-5">
+      <label class="form-label small text-muted mb-1">Search</label>
+      <input type="text" name="q" value="{{ q }}" class="form-control form-control-sm" placeholder="Order no, item name, field, value, username...">
+    </div>
+    <div class="col-md-3">
+      <button class="btn btn-dark btn-sm w-100">Filter</button>
+    </div>
+  </form>
+</div>
+
+<div class="card p-3">
+  <table class="table table-sm table-hover align-middle mb-0">
+    <thead>
+      <tr>
+        <th>When</th>
+        <th>User</th>
+        <th>Area</th>
+        <th>Record</th>
+        <th>Action</th>
+        <th>Field</th>
+        <th>Before</th>
+        <th>After</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for e in entries %}
+      <tr>
+        <td class="text-nowrap">{{ e.created_at|dt('%d-%b-%Y %H:%M') }}</td>
+        <td>{{ e.username or '—' }}</td>
+        <td><span class="badge bg-light text-dark border">{{ e.entity_type }}</span></td>
+        <td>
+          {% if e.entity_type in entity_links %}
+          <a href="{{ entity_links[e.entity_type][1].format(id=e.entity_id) }}">{{ e.entity_label or ('#' ~ e.entity_id) }}</a>
+          {% else %}
+          {{ e.entity_label or ('#' ~ e.entity_id) }}
+          {% endif %}
+        </td>
+        <td>
+          <span class="badge bg-{{ {'create':'success','update':'primary','delete':'danger','status_change':'warning','receive':'info','adjust':'secondary','add_serials':'secondary'}.get(e.action, 'secondary') }}">{{ e.action }}</span>
+        </td>
+        <td>{{ e.field_name or '—' }}</td>
+        <td class="text-truncate" style="max-width: 220px;" title="{{ e.old_value or '' }}">{{ e.old_value or '' }}</td>
+        <td class="text-truncate" style="max-width: 220px;" title="{{ e.new_value or '' }}">{{ e.new_value or '' }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="8" class="text-muted text-center">No audit entries match.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% if entries|length == 500 %}
+  <div class="text-muted small mt-2">Showing the most recent 500 entries — narrow your filter to see older ones.</div>
+  {% endif %}
+</div>
+{% endblock %}
