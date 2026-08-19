@@ -27,7 +27,7 @@
     </div>
 
     <table class="table table-sm" id="lineTable">
-      <thead><tr><th>Item</th><th style="width:120px;">Qty</th><th style="width:140px;">Unit Price</th><th style="width:120px;">Line Total</th><th></th></tr></thead>
+      <thead><tr><th style="width:320px;">Item</th><th style="width:120px;">Qty</th><th style="width:140px;">Unit Price</th><th style="width:120px;">Line Total</th><th></th></tr></thead>
       <tbody></tbody>
     </table>
     <button type="button" class="btn btn-outline-secondary btn-sm mb-3" onclick="addRow()">+ Add Line</button>
@@ -43,6 +43,34 @@
     <a href="{{ '/purchase/%d' % order.id if order else '/purchase' }}" class="btn btn-link">Cancel</a>
   </form>
 </div>
+
+<style>
+/* Scoped to this page's item-picker only — a plain type-to-filter dropdown
+   replacing the old flat <select> now that the item catalog is long enough
+   that scrolling through it by hand is slow. No new JS library pulled in
+   (this app is vanilla JS throughout), so it stays a self-contained widget:
+   a text input + hidden item_id input + an absolutely-positioned list. */
+.item-search-wrap { position: relative; }
+.item-search-dropdown {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 1050;
+  max-height: 220px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #ced4da;
+  border-radius: 0.25rem;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+}
+.item-search-dropdown button.list-group-item {
+  cursor: pointer;
+  border: none;
+  border-bottom: 1px solid #f0f0f0;
+}
+.item-search-dropdown button.list-group-item:last-child { border-bottom: none; }
+</style>
 {% endblock %}
 
 {% block extra_js %}
@@ -60,9 +88,9 @@
 // to pre-fill real data.
 //
 // Same fix as the Sales Order form: several plain <input> fields here (Qty,
-// Unit Price) would otherwise submit the form via the browser's default
-// "implicit submit" on Enter. Only clicking (or keyboard-activating) the
-// Save button should submit.
+// Unit Price, and now the item search box) would otherwise submit the form
+// via the browser's default "implicit submit" on Enter. Only clicking (or
+// keyboard-activating) the Save button should submit.
 document.getElementById('purchaseOrderForm').addEventListener('keydown', function (e) {
   if (e.key === 'Enter' && e.target.tagName !== 'TEXTAREA' && e.target.type !== 'submit') {
     e.preventDefault();
@@ -79,34 +107,99 @@ const submittedLines = [
 function addRow(selectedId, qty, price) {
   const tbody = document.querySelector('#lineTable tbody');
   const row = document.createElement('tr');
-  const options = items.map(i => `<option value="${i.id}" ${selectedId == i.id ? 'selected' : ''} data-price="${i.price}">${i.name} (stock: ${i.stock})</option>`).join('');
   row.innerHTML = `
-    <td><select name="item_id" class="form-select form-select-sm item-select" onchange="onItemChange(this)"><option value="">-- item --</option>${options}</select></td>
+    <td>
+      <div class="item-search-wrap">
+        <input type="text" class="form-control form-control-sm item-search-input" placeholder="Search item..." autocomplete="off">
+        <input type="hidden" name="item_id" class="item-id-input">
+        <div class="item-search-dropdown list-group"></div>
+      </div>
+    </td>
     <td><input type="number" name="quantity" class="form-control form-control-sm qty-input" min="0.0001" step="any" value="${qty || 1}" oninput="recalcRow(this)"></td>
     <td><input type="number" step="0.01" name="unit_price" class="form-control form-control-sm price-input" value="${price != null ? price : '0.00'}" oninput="recalcRow(this)"></td>
     <td><span class="line-total">0.00</span></td>
     <td><button type="button" class="btn btn-sm btn-outline-danger" onclick="this.closest('tr').remove(); recalcTotal();">x</button></td>
   `;
   tbody.appendChild(row);
+  setupItemSearch(row, selectedId);
   if (selectedId) recalcRow(row.querySelector('.qty-input'));
 }
 
-function onItemChange(select) {
-  const row = select.closest('tr');
+function setupItemSearch(row, selectedId) {
+  const input = row.querySelector('.item-search-input');
+  const hidden = row.querySelector('.item-id-input');
+  const dropdown = row.querySelector('.item-search-dropdown');
+
+  function renderDropdown(filterText) {
+    const q = filterText.trim().toLowerCase();
+    const matches = q ? items.filter(i => i.name.toLowerCase().includes(q)) : items;
+    dropdown.innerHTML = matches.length
+      ? matches.map(i => `<button type="button" class="list-group-item list-group-item-action py-1 px-2 small" data-id="${i.id}">${i.name} <span class="text-muted">(stock: ${i.stock})</span></button>`).join('')
+      : '<div class="px-2 py-1 small text-muted">No items match</div>';
+    dropdown.style.display = 'block';
+  }
+
+  function pick(item) {
+    hidden.value = item.id;
+    input.value = item.name;
+    dropdown.style.display = 'none';
+    onItemChange(row);
+  }
+
+  input.addEventListener('focus', () => renderDropdown(input.value));
+  input.addEventListener('input', () => {
+    hidden.value = ''; // typing invalidates the previous selection until a match is clicked/chosen
+    renderDropdown(input.value);
+  });
+  input.addEventListener('blur', () => {
+    // Delay so a click (mousedown) on a dropdown button registers first.
+    setTimeout(() => { dropdown.style.display = 'none'; }, 150);
+  });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      dropdown.style.display = 'none';
+    } else if (e.key === 'Enter') {
+      const first = dropdown.querySelector('button[data-id]');
+      if (first) {
+        const item = items.find(i => i.id == first.dataset.id);
+        if (item) pick(item);
+      }
+    }
+  });
+  // mousedown (not click) fires before the input's blur — needed so the
+  // selection registers before the blur handler hides the dropdown.
+  dropdown.addEventListener('mousedown', (e) => {
+    const btn = e.target.closest('button[data-id]');
+    if (!btn) return;
+    e.preventDefault();
+    const item = items.find(i => i.id == btn.dataset.id);
+    if (item) pick(item);
+  });
+
+  if (selectedId) {
+    const item = items.find(i => i.id == selectedId);
+    if (item) {
+      hidden.value = item.id;
+      input.value = item.name;
+    }
+  }
+}
+
+function onItemChange(row) {
   const currency = document.getElementById('currencySelect').value;
+  const hidden = row.querySelector('.item-id-input');
+  const item = items.find(i => i.id == hidden.value);
   // Item.purchase_price is always stored in INR (this app has no
   // per-currency price book), so only auto-fill it when the order itself
   // is in INR — otherwise it'd silently plant a rupee number into a
   // dollar/euro field. For a foreign-currency order the vendor's own
   // quoted price has to be typed in by hand.
-  if (currency === 'INR') {
-    const price = parseFloat(select.selectedOptions[0]?.dataset.price || 0);
-    // Plain <input type="number"> — must stay plain numeric, never comma-formatted.
-    row.querySelector('.price-input').value = price.toFixed(2);
+  if (currency === 'INR' && item) {
+    row.querySelector('.price-input').value = item.price.toFixed(2);
   } else {
     row.querySelector('.price-input').value = '0.00';
   }
-  recalcRow(select);
+  recalcRow(row.querySelector('.qty-input'));
 }
 
 function onCurrencyChange() {
