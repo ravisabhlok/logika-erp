@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+{% block title %}{{ "Edit" if invoice else "New" }} Invoice{% endblock %}
+{% block content %}
+<h4 class="mb-1">{{ "Edit " ~ invoice.invoice_no if invoice else "New Invoice" }}</h4>
+<p class="text-muted">Against Sales Order <a href="/sales/{{ order.id }}">{{ order.order_no }}</a> — {{ order.customer.name }}</p>
+
+<div class="card p-4">
+  {% if errors.invoice_no %}<div class="alert alert-danger py-2">{{ errors.invoice_no }}</div>{% endif %}
+  {% if errors._general %}<div class="alert alert-danger py-2">{{ errors._general }}</div>{% endif %}
+  <form method="post" action="{{ '/invoices/%d/edit' % invoice.id if invoice else '/invoices/new?sales_order_id=%d' % order.id }}" id="invoiceForm">
+    <div class="row">
+      <div class="col-md-4 mb-3">
+        <label class="form-label">Invoice No</label>
+        <input type="text" name="invoice_no" class="form-control {{ 'is-invalid' if errors.invoice_no else '' }}" value="{{ submitted_no }}" placeholder="Leave blank to auto-generate">
+        <div class="form-text">Leave blank for an auto-generated INV/FY/#### number.</div>
+      </div>
+      <div class="col-md-4 mb-3">
+        <label class="form-label">Invoice Date *</label>
+        <input type="date" name="invoice_date" class="form-control" value="{{ invoice_date }}" required>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="col-md-6 mb-3">
+        <div class="card p-3 h-100">
+          <div class="text-muted small mb-2">Bill To</div>
+          <input type="text" name="bill_to_name" class="form-control form-control-sm mb-2" placeholder="Name" value="{{ bill_to.name }}">
+          <textarea name="bill_to_address" class="form-control form-control-sm mb-2" rows="2" placeholder="Address">{{ bill_to.address }}</textarea>
+          <div class="row g-2">
+            <div class="col-4"><input type="text" name="bill_to_city" class="form-control form-control-sm" placeholder="City" value="{{ bill_to.city }}"></div>
+            <div class="col-4"><input type="text" name="bill_to_state" class="form-control form-control-sm" placeholder="State" value="{{ bill_to.state }}"></div>
+            <div class="col-4"><input type="text" name="bill_to_country" class="form-control form-control-sm" placeholder="Country" value="{{ bill_to.country }}"></div>
+          </div>
+          <input type="text" name="bill_to_gstin" class="form-control form-control-sm mt-2" placeholder="GSTIN" value="{{ bill_to.gstin }}">
+        </div>
+      </div>
+      <div class="col-md-6 mb-3">
+        <div class="card p-3 h-100">
+          <div class="text-muted small mb-2">Ship To</div>
+          <input type="text" name="ship_to_name" class="form-control form-control-sm mb-2" placeholder="Name" value="{{ ship_to.name }}">
+          <textarea name="ship_to_address" class="form-control form-control-sm mb-2" rows="2" placeholder="Address">{{ ship_to.address }}</textarea>
+          <div class="row g-2">
+            <div class="col-4"><input type="text" name="ship_to_city" class="form-control form-control-sm" placeholder="City" value="{{ ship_to.city }}"></div>
+            <div class="col-4"><input type="text" name="ship_to_state" class="form-control form-control-sm" placeholder="State" value="{{ ship_to.state }}"></div>
+            <div class="col-4"><input type="text" name="ship_to_country" class="form-control form-control-sm" placeholder="Country" value="{{ ship_to.country }}"></div>
+          </div>
+          <input type="text" name="ship_to_gstin" class="form-control form-control-sm mt-2" placeholder="GSTIN" value="{{ ship_to.gstin }}">
+        </div>
+      </div>
+    </div>
+
+    <table class="table table-sm align-middle" id="lineTable">
+      <thead>
+        <tr>
+          <th>Item</th><th class="text-end">Ordered</th><th class="text-end">Already Invoiced</th>
+          <th style="width:130px;">Qty to Invoice</th><th style="width:120px;">Unit Price</th><th class="text-end">Line Total</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in rows %}
+        <tr>
+          <td>
+            {{ r.line.item.name }}
+            {% if r.line.item.has_serial %}<span class="badge bg-info text-dark">serialized</span>{% endif %}
+          </td>
+          <td class="text-end">{{ r.ordered|qty }}</td>
+          <td class="text-end">{{ r.invoiced|qty }}</td>
+          <td>
+            <input type="hidden" name="sales_order_item_id" value="{{ r.line.id }}">
+            <input type="number" name="quantity" class="form-control form-control-sm qty-input" min="0" max="{{ r.remaining }}" step="any"
+                   value="{{ r.default_qty }}" data-gst="{{ (r.line.item.gst_percentage or 0)|float }}" oninput="recalcRow(this)">
+            <div class="form-text">max {{ r.remaining|qty }}</div>
+            {% if errors.get(r.line.id) %}<div class="text-danger small">{{ errors.get(r.line.id) }}</div>{% endif %}
+          </td>
+          <td><input type="number" name="unit_price" class="form-control form-control-sm price-input" min="0" step="any" value="{{ r.default_price }}" oninput="recalcRow(this)"></td>
+          <td class="text-end"><span class="line-total" data-value="0">0.00</span></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+
+    <div class="mb-3">
+      <label class="form-label">Notes</label>
+      <textarea name="notes" class="form-control" rows="2">{{ notes }}</textarea>
+    </div>
+
+    <div class="mb-3">
+      <div>Subtotal: <span id="invSubtotal">0.00</span></div>
+      <div>GST: <span id="invGst">0.00</span></div>
+      <div class="fw-bold">Invoice Value: <span id="invGrandTotal">0.00</span></div>
+    </div>
+
+    <button type="submit" class="btn btn-dark">{{ "Save Changes" if invoice else "Save Draft Invoice" }}</button>
+    <a href="{{ '/invoices/%d' % invoice.id if invoice else '/sales/%d' % order.id }}" class="btn btn-link">Cancel</a>
+  </form>
+</div>
+<div class="form-text mt-2">Saved as a draft first — issuing it (a separate step, from the invoice page) is what deducts stock and locks it.</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Same "Enter shouldn't submit" guard as sales/form.html — several plain
+// number inputs in a row where tabbing through and hitting Enter by
+// accident would otherwise submit the form early.
+document.getElementById('invoiceForm').addEventListener('keydown', function (e) {
+  if (e.key === 'Enter' && e.target.tagName !== 'TEXTAREA' && e.target.type !== 'submit') {
+    e.preventDefault();
+  }
+});
+
+function recalcRow(el) {
+  const row = el.closest('tr');
+  const qty = parseFloat(row.querySelector('.qty-input').value) || 0;
+  const price = parseFloat(row.querySelector('.price-input').value) || 0;
+  const lineTotal = qty * price;
+  const lineTotalEl = row.querySelector('.line-total');
+  // data-value keeps the raw number for recalcTotal() to sum; textContent
+  // holds the Indian-formatted display string, which parseFloat() can't
+  // read back (it stops at the first comma) — same convention as
+  // sales/form.html.
+  lineTotalEl.dataset.value = lineTotal;
+  lineTotalEl.textContent = formatINR(lineTotal);
+  recalcTotal();
+}
+
+function recalcTotal() {
+  let subtotal = 0, gstTotal = 0;
+  document.querySelectorAll('#lineTable tbody tr').forEach(row => {
+    const lineTotal = parseFloat(row.querySelector('.line-total').dataset.value) || 0;
+    subtotal += lineTotal;
+    const gst = parseFloat(row.querySelector('.qty-input').dataset.gst) || 0;
+    gstTotal += lineTotal * gst / 100;
+  });
+  document.getElementById('invSubtotal').textContent = formatINR(subtotal);
+  document.getElementById('invGst').textContent = formatINR(gstTotal);
+  document.getElementById('invGrandTotal').textContent = formatINR(subtotal + gstTotal);
+}
+
+document.querySelectorAll('#lineTable .qty-input').forEach(recalcRow);
+</script>
+{% endblock %}

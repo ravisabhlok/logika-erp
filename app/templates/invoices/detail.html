@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}{{ invoice.invoice_no }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">{{ invoice.invoice_no }}</h4>
+  <div>
+    {% if invoice.status == 'draft' and perms.edit %}
+    <a href="/invoices/{{ invoice.id }}/edit" class="btn btn-outline-secondary btn-sm">Edit</a>
+    {% endif %}
+    {% if invoice.status == 'draft' and perms.delete %}
+    <form method="post" action="/invoices/{{ invoice.id }}/delete" class="d-inline" onsubmit="return confirm('Delete this draft invoice?');">
+      <button class="btn btn-outline-danger btn-sm">Delete</button>
+    </form>
+    {% endif %}
+    <a href="/invoices/{{ invoice.id }}/pdf" target="_blank" class="btn btn-outline-primary btn-sm">Download PDF</a>
+    <span class="badge bg-{{ {'draft':'secondary','issued':'success','cancelled':'danger'}[invoice.status] }} fs-6">{{ invoice.status }}</span>
+  </div>
+</div>
+
+<div class="row mb-3">
+  <div class="col-md-4">
+    <div class="card p-3">
+      <div class="text-muted small">Against Sales Order</div>
+      <div><a href="/sales/{{ invoice.sales_order.id }}">{{ invoice.sales_order.order_no }}</a></div>
+      <div class="text-muted small mt-2">Invoice Date</div>
+      <div>{{ invoice.invoice_date|dt('%d-%b-%Y') }}</div>
+      {% if invoice.issued_at %}
+      <div class="text-muted small mt-2">Issued</div>
+      <div>{{ invoice.issued_at|dt('%d-%b-%Y %H:%M') }}{% if invoice.stock_deducted %}<span class="badge bg-light text-dark border ms-1">stock deducted</span>{% else %}<span class="badge bg-light text-dark border ms-1">billing only</span>{% endif %}</div>
+      {% endif %}
+      {% if invoice.cancelled_at %}
+      <div class="text-muted small mt-2">Cancelled</div>
+      <div>{{ invoice.cancelled_at|dt('%d-%b-%Y %H:%M') }}</div>
+      {% endif %}
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card p-3">
+      <div class="text-muted small">Bill To</div>
+      <div class="fw-semibold">{{ invoice.bill_to_name or '—' }}</div>
+      {% if invoice.bill_to_address %}<div style="white-space: pre-line;">{{ invoice.bill_to_address }}</div>{% endif %}
+      {% if invoice.bill_to_gstin %}<div>GSTIN {{ invoice.bill_to_gstin }}</div>{% endif %}
+      <div class="text-muted small mt-3">Ship To</div>
+      <div class="fw-semibold">{{ invoice.ship_to_name or '—' }}</div>
+      {% if invoice.ship_to_address %}<div style="white-space: pre-line;">{{ invoice.ship_to_address }}</div>{% endif %}
+      {% if invoice.ship_to_gstin %}<div>GSTIN {{ invoice.ship_to_gstin }}</div>{% endif %}
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card p-3">
+      <div class="text-muted small mb-2">Actions</div>
+      {% if not perms.edit %}
+      <span class="text-muted">No further actions.</span>
+      {% elif invoice.status == 'draft' %}
+      <a href="/invoices/{{ invoice.id }}/issue" class="btn btn-success btn-sm">Issue Invoice</a>
+      {% elif invoice.status == 'issued' %}
+      <form method="post" action="/invoices/{{ invoice.id }}/cancel" class="d-inline" onsubmit="return confirm('Cancel this invoice?{{ " This will reverse the stock deduction." if invoice.stock_deducted else "" }}');">
+        <button class="btn btn-outline-danger btn-sm">Cancel Invoice</button>
+      </form>
+      {% else %}
+      <span class="text-muted">No further actions.</span>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="card p-3">
+  <table class="table table-sm mb-0">
+    <thead><tr><th>Item</th><th class="text-end">Qty</th><th class="text-end">Unit Price</th><th class="text-end">GST%</th><th class="text-end">Total</th><th>Serial Numbers</th></tr></thead>
+    <tbody>
+    {% for line in invoice.items %}
+      <tr>
+        <td><a href="/items/{{ line.item.id }}">{{ line.item.name }}</a></td>
+        <td class="text-end">{{ line.quantity|qty }}</td>
+        <td class="text-end">{{ line.unit_price|inr }}</td>
+        <td class="text-end">{{ ("%.2f"|format(line.gst_percentage)) if line.gst_percentage is not none else "0.00" }}</td>
+        <td class="text-end">{{ line.total|inr }}</td>
+        <td>
+          {% if line.item.has_serial %}
+            {% if line.serials %}
+            <span class="small">{{ line.serials|map(attribute='serial_number')|join(', ') }}</span>
+            {% elif invoice.status == 'draft' %}
+            <span class="badge bg-warning text-dark">to be captured on issue</span>
+            {% else %}
+            <span class="text-muted">—</span>
+            {% endif %}
+          {% else %}
+          <span class="text-muted">—</span>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+    <tfoot>
+      <tr><th colspan="4" class="text-end">Subtotal</th><th class="text-end">{{ invoice.total_amount|inr }}</th><th></th></tr>
+      <tr><th colspan="4" class="text-end">GST</th><th class="text-end">{{ (invoice.gst_amount or 0)|inr }}</th><th></th></tr>
+      <tr><th colspan="4" class="text-end">Invoice Value</th><th class="text-end">{{ (invoice.total_amount + (invoice.gst_amount or 0))|inr }}</th><th></th></tr>
+    </tfoot>
+  </table>
+</div>
+
+{% if invoice.notes %}
+<div class="card p-3 mt-3">
+  <div class="text-muted small">Notes</div>
+  <div>{{ invoice.notes }}</div>
+</div>
+{% endif %}
+{% endblock %}

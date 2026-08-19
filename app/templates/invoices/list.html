@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Invoices{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">Invoices</h4>
+</div>
+<div class="card p-3">
+  <table class="table table-hover align-middle mb-0">
+    <thead><tr><th>Invoice#</th><th>Sales Order</th><th>Customer</th><th>Date</th><th>Status</th><th class="text-end">Total</th></tr></thead>
+    <tbody>
+    {% for inv in invoices %}
+      <tr onclick="window.location='/invoices/{{ inv.id }}'" style="cursor:pointer;">
+        <td>{{ inv.invoice_no }}</td>
+        <td>{{ inv.sales_order.order_no }}</td>
+        <td>{{ inv.sales_order.customer.name }}</td>
+        <td>{{ inv.invoice_date|dt('%d-%b-%Y') }}</td>
+        <td><span class="badge bg-{{ {'draft':'secondary','issued':'success','cancelled':'danger'}[inv.status] }}">{{ inv.status }}</span></td>
+        <td class="text-end">{{ (inv.total_amount + (inv.gst_amount or 0))|inr }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="6" class="text-muted text-center">No invoices yet — raise one from a confirmed Sales Order's page.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

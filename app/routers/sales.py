@@ -333,11 +333,21 @@ def view_sales_order(order_id: int, request: Request, db: Session = Depends(get_
             joinedload(SalesOrder.ship_to_customer),
             joinedload(SalesOrder.items).joinedload(SalesOrderItem.item),
             joinedload(SalesOrder.payment_terms),
+            joinedload(SalesOrder.invoices),
         )
         .get(order_id)
     )
     perms = get_user_module_permissions(user, db, "sales")
-    return templates.TemplateResponse("sales/detail.html", {"request": request, "user": user, "order": order, "perms": perms})
+    # Purely for the "+ Create Invoice" button on this page — see
+    # app/routers/invoices.py for the module itself. Computed here rather
+    # than imported from invoices.py to avoid a routers/routers import
+    # cycle (sales.py -> invoices.py -> back to sales.py isn't needed
+    # either way, but this keeps each router's own template concerns local).
+    perms_invoices = get_user_module_permissions(user, db, "invoices")
+    return templates.TemplateResponse(
+        "sales/detail.html",
+        {"request": request, "user": user, "order": order, "perms": perms, "perms_invoices": perms_invoices},
+    )
 
 
 @router.get("/{order_id}/pdf")

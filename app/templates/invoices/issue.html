@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Issue {{ invoice.invoice_no }}{% endblock %}
+{% block content %}
+<h4 class="mb-3">Issue {{ invoice.invoice_no }}</h4>
+{% if billing_only %}
+<p class="text-muted">This invoice's Sales Order (<a href="/sales/{{ invoice.sales_order.id }}">{{ invoice.sales_order.order_no }}</a>) was already marked Delivered — stock already moved then. Issuing this invoice is billing-only and won't touch stock or serials.</p>
+{% else %}
+<p class="text-muted">Confirming will deduct stock for the quantities below{% if invoice.items|selectattr('item.has_serial')|list %} and capture the serial numbers shipped{% endif %}.</p>
+{% endif %}
+
+<div class="card p-4">
+  <form method="post" action="/invoices/{{ invoice.id }}/issue">
+    <table class="table table-sm align-middle">
+      <thead><tr><th>Item</th><th class="text-end" style="width:100px;">Qty</th>{% if not billing_only %}<th>Serial Numbers</th>{% endif %}</tr></thead>
+      <tbody>
+      {% for line in invoice.items %}
+        <tr>
+          <td>
+            {{ line.item.name }}
+            {% if line.item.has_serial %}<span class="badge bg-info text-dark">serialized</span>{% endif %}
+          </td>
+          <td class="text-end">{{ line.quantity|qty }}</td>
+          {% if not billing_only %}
+          <td>
+            {% if line.item.has_serial %}
+              <textarea name="serials_{{ line.id }}" class="form-control form-control-sm {{ 'is-invalid' if errors.get(line.id) else '' }}" rows="2"
+                        placeholder="Enter {{ line.quantity|qty }} serial number(s), one per line or comma-separated">{{ submitted.get(line.id, '') }}</textarea>
+              {% if errors.get(line.id) %}
+                <div class="invalid-feedback d-block">{{ errors.get(line.id) }}</div>
+              {% endif %}
+            {% else %}
+              <span class="text-muted">Not serialized — no input needed.</span>
+            {% endif %}
+          </td>
+          {% endif %}
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+
+    <button type="submit" class="btn btn-success">{{ "Confirm Issue (billing only)" if billing_only else "Confirm Issue (deducts stock)" }}</button>
+    <a href="/invoices/{{ invoice.id }}" class="btn btn-link">Cancel</a>
+  </form>
+</div>
+{% endblock %}

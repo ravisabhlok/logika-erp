@@ -19,6 +19,7 @@ templates.env.filters["dt"] = format_dt
 ENTITY_LINKS = {
     "item": ("Item", "/items/{id}"),
     "sales_order": ("Sales Order", "/sales/{id}"),
+    "invoice": ("Invoice", "/invoices/{id}"),
     "purchase_order": ("Purchase Order", "/purchase/{id}"),
     "user": ("User", "/users/{id}/edit"),
     "role": ("Role", "/roles/{id}/edit"),
@@ -27,6 +28,7 @@ ENTITY_TYPES = [
     ("item", "Items"),
     ("sales_order", "Sales Orders"),
     ("sales_order_payment_term", "Payment Terms"),
+    ("invoice", "Invoices"),
     ("purchase_order", "Purchase Orders"),
     ("item_serial", "Serial Numbers"),
     ("user", "Users"),

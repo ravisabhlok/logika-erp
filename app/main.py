@@ -7,7 +7,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from app.config import settings
 from app.auth import NotAuthenticatedException, PermissionDeniedException, get_current_user
 from app.routers import (
-    auth_router, dashboard, customers, vendors, items, sales, purchase, inventory,
+    auth_router, dashboard, customers, vendors, items, sales, invoices, purchase, inventory,
     production, roles, users, audit,
 )
 
@@ -46,6 +46,7 @@ app.include_router(customers.router)
 app.include_router(vendors.router)
 app.include_router(items.router)
 app.include_router(sales.router)
+app.include_router(invoices.router)
 app.include_router(purchase.router)
 app.include_router(inventory.router)
 app.include_router(production.router)

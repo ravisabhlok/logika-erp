@@ -319,6 +319,11 @@ class SalesOrder(Base):
         "SalesOrderPaymentTerm", back_populates="sales_order",
         cascade="all, delete-orphan", order_by="SalesOrderPaymentTerm.id",
     )
+    # Not cascade="delete-orphan" — there's no delete route for a SalesOrder
+    # today, but even if there were, an issued Invoice is its own financial
+    # record and shouldn't vanish alongside the order. See Invoice's
+    # docstring for the full Sales Order -> Invoice design.
+    invoices = relationship("Invoice", back_populates="sales_order", order_by="Invoice.id")
 
 
 class SalesOrderItem(Base):
@@ -412,6 +417,132 @@ class SalesOrderPaymentTerm(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     sales_order = relationship("SalesOrder", back_populates="payment_terms")
+
+
+# ---------------------------------------------------------------------------
+# Invoicing (Sales Order -> Invoice)
+# ---------------------------------------------------------------------------
+
+class Invoice(Base):
+    """A (partial) tax invoice raised against a `confirmed` (or already
+    `delivered`) Sales Order — one order can become more than one invoice
+    (partial billing/shipment); one invoice always belongs to exactly one
+    order. See claude/invoice-and-serial-tracking-design.md for the full
+    design discussion this was built from.
+
+    `invoice_no` is financial-year scoped (`INV/25-26/0001`, FY = Apr-Mar —
+    see `next_invoice_no` in app/routers/invoices.py) and resets to 0001
+    each April: same "count what's already there" approach as
+    `SalesOrder.order_no`/`PurchaseOrder.order_no`, just counting rows that
+    share this FY's prefix instead of the whole table.
+
+    Bill To / Ship To are a full, independent snapshot (name, address, city,
+    state, country, GSTIN) taken when the invoice is created — deliberately
+    more complete than `SalesOrder.billing_address`/`shipping_address`
+    (plain text only), since this is a real tax document rather than a
+    planning one: it has to read exactly as issued even if the customer's
+    saved details are edited later. Pre-filled from the order/customer, same
+    "computed default, editable after" pattern used throughout this app.
+
+    Lifecycle: `draft` (editable, no stock/serial effect) -> `issued`
+    (locked; deducts stock per line and, for a `has_serial` line, consumes
+    exactly `quantity` of that item's not-yet-shipped serials) ->
+    `cancelled` (reverses both, if they happened — see `stock_deducted`).
+    See app/routers/invoices.py: issue_invoice / cancel_invoice.
+
+    `stock_deducted` records whether *issuing this invoice* itself actually
+    moved stock — it doesn't for an invoice raised against an order that was
+    already marked `delivered` via the Sales Order's own one-click button
+    (stock already left then; this invoice is billing-only). Stored rather
+    than re-derived from the order's status at cancel time, since the
+    order's status can keep changing after this invoice is issued (e.g.
+    another line's invoice later completing the order) — cancelling still
+    needs to know what *this* invoice itself did, not what the order
+    currently looks like.
+    """
+    __tablename__ = "invoices"
+
+    id = Column(Integer, primary_key=True)
+    invoice_no = Column(String(40), unique=True, nullable=False, index=True)
+    sales_order_id = Column(Integer, ForeignKey("sales_orders.id"), nullable=False)
+    invoice_date = Column(DateTime, default=datetime.utcnow, nullable=False)
+    status = Column(
+        Enum("draft", "issued", "cancelled", name="invoice_status"),
+        default="draft", nullable=False,
+    )
+
+    bill_to_name = Column(String(200), nullable=True)
+    bill_to_address = Column(Text, nullable=True)
+    bill_to_city = Column(String(100), nullable=True)
+    bill_to_state = Column(String(100), nullable=True)
+    bill_to_country = Column(String(100), nullable=True)
+    bill_to_gstin = Column(String(20), nullable=True)
+
+    ship_to_name = Column(String(200), nullable=True)
+    ship_to_address = Column(Text, nullable=True)
+    ship_to_city = Column(String(100), nullable=True)
+    ship_to_state = Column(String(100), nullable=True)
+    ship_to_country = Column(String(100), nullable=True)
+    ship_to_gstin = Column(String(20), nullable=True)
+
+    notes = Column(Text, nullable=True)
+    total_amount = Column(Numeric(14, 2), default=0)
+    gst_amount = Column(Numeric(14, 2), default=0)
+    stock_deducted = Column(Boolean, default=False, nullable=False)
+
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    issued_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    issued_at = Column(DateTime, nullable=True)
+    cancelled_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    cancelled_at = Column(DateTime, nullable=True)
+
+    sales_order = relationship("SalesOrder", back_populates="invoices")
+    items = relationship(
+        "InvoiceItem", back_populates="invoice",
+        cascade="all, delete-orphan", order_by="InvoiceItem.id",
+    )
+    created_by_user = relationship("User", foreign_keys=[created_by])
+    issued_by_user = relationship("User", foreign_keys=[issued_by])
+    cancelled_by_user = relationship("User", foreign_keys=[cancelled_by])
+
+
+class InvoiceItem(Base):
+    """One line of an Invoice — always traces back to the `SalesOrderItem`
+    it was billed against (`sales_order_item_id`), so "how much of this
+    order line has been invoiced" is always computed fresh by summing
+    across an order's non-cancelled invoices (see
+    app/routers/invoices.py:remaining_to_invoice), never a stored counter —
+    same reasoning as compute_global_requirements/compute_demand_map.
+
+    `unit_price`/`gst_percentage`/`hsn_code` are snapshotted here as of
+    invoice time (not read live off `Item`), since this is a real tax
+    document — same "freeze what was actually billed" reasoning as
+    `SalesOrderItem.unit_price`, just carried one step further than
+    `SalesOrder.gst_amount` currently does (see that column's docstring).
+    A composite/assembly item appears as one line at its own price — no BOM
+    explosion here, same as a Sales Order line.
+    """
+    __tablename__ = "invoice_items"
+
+    id = Column(Integer, primary_key=True)
+    invoice_id = Column(Integer, ForeignKey("invoices.id"), nullable=False)
+    sales_order_item_id = Column(Integer, ForeignKey("sales_order_items.id"), nullable=False)
+    item_id = Column(Integer, ForeignKey("items.id"), nullable=False)
+    quantity = Column(Numeric(14, 4), nullable=False)
+    unit_price = Column(Numeric(12, 2), nullable=False)
+    gst_percentage = Column(Numeric(5, 2), nullable=True, default=0)
+    hsn_code = Column(String(10), nullable=True)
+    total = Column(Numeric(14, 2), nullable=False)
+
+    invoice = relationship("Invoice", back_populates="items")
+    sales_order_item = relationship("SalesOrderItem")
+    item = relationship("Item")
+    # The specific physical units shipped against this line, for a
+    # has_serial item — populated when the invoice is issued (see
+    # ItemSerial.invoice_item_id) and cleared again if the invoice is later
+    # cancelled, freeing those serials back into the unshipped pool.
+    serials = relationship("ItemSerial", back_populates="invoice_item")
 
 
 # ---------------------------------------------------------------------------
@@ -553,7 +684,7 @@ class StockTransaction(Base):
     item_id = Column(Integer, ForeignKey("items.id"), nullable=False)
     transaction_type = Column(Enum("IN", "OUT", "ADJUST", name="stock_txn_type"), nullable=False)
     quantity = Column(Numeric(14, 4), nullable=False)  # always positive; type determines direction
-    reference_type = Column(String(30))  # 'sales_order' | 'purchase_order' | 'manual'
+    reference_type = Column(String(30))  # 'sales_order' | 'purchase_order' | 'invoice' | 'manual' | 'production_order'
     reference_id = Column(Integer, nullable=True)
     notes = Column(Text)
     transaction_date = Column(DateTime, default=datetime.utcnow)
@@ -571,9 +702,14 @@ class ItemSerial(Base):
     this app's general style of validating in the route, not the schema),
     but the two capture flows each only ever populate their own side.
 
-    Still only inbound: nothing here yet records which serial went *out*
-    on a sale — see CLAUDE.md's "Known scope" note; that's a Sales/Invoice
-    side gap, not a Production/Purchase one.
+    Outbound side: `invoice_item_id`/`shipped_at` are set when this serial
+    is consumed by issuing an Invoice for a `has_serial` line (see
+    app/routers/invoices.py:issue_invoice) — both null means the unit is
+    still physically in stock and unshipped. A row can go back to null if
+    that invoice is later cancelled (app/routers/invoices.py:cancel_invoice),
+    freeing the physical unit back into the unshipped pool exactly as if it
+    had never been invoiced. "Unshipped serials for this item" is always
+    `ItemSerial.invoice_item_id.is_(None)`, never a separate stored flag.
     """
     __tablename__ = "item_serials"
     __table_args__ = (UniqueConstraint("item_id", "serial_number", name="uq_item_serial"),)
@@ -584,11 +720,14 @@ class ItemSerial(Base):
     purchase_order_id = Column(Integer, ForeignKey("purchase_orders.id"), nullable=True)
     purchase_order_item_id = Column(Integer, ForeignKey("purchase_order_items.id"), nullable=True)
     production_order_id = Column(Integer, ForeignKey("production_orders.id"), nullable=True)
+    invoice_item_id = Column(Integer, ForeignKey("invoice_items.id"), nullable=True)
     received_at = Column(DateTime, default=datetime.utcnow)
+    shipped_at = Column(DateTime, nullable=True)
 
     item = relationship("Item")
     purchase_order = relationship("PurchaseOrder")
     purchase_order_item = relationship("PurchaseOrderItem", back_populates="serials")
+    invoice_item = relationship("InvoiceItem", back_populates="serials")
     production_order = relationship("ProductionOrder", back_populates="serials")
 
 
@@ -617,7 +756,8 @@ class AuditLog(Base):
 
     Only wired into the high-value areas agreed on first: Items (pricing/
     stock-affecting fields), Sales Orders and Purchase Orders (including
-    status transitions and receiving), Inventory manual adjustments, and
+    status transitions and receiving), Invoices (create/edit/issue/cancel —
+    see app/routers/invoices.py), Inventory manual adjustments, and
     Users/Roles (permission changes). Customers, Vendors, and Production
     aren't covered yet — a deliberate first-pass scope, not an oversight;
     extend the same way (call log_field_changes/log_action from the route)

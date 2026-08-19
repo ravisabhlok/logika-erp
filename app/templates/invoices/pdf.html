@@ -1,0 +1,179 @@
+<!--
+Standalone print layout for the Invoice PDF (GET /invoices/{id}/pdf) —
+same xhtml2pdf constraints and same structural idiom as sales/pdf.html (see
+that file's header comment); this is its tax-invoice sibling, adding a
+per-line GST%/GST Amount breakdown that the Sales Order PDF deliberately
+doesn't have (see SalesOrder.gst_amount's docstring in models.py for why
+that one stays a blended total).
+-->
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  @page { size: A4; margin: 1.7cm 1.6cm; }
+  body { font-family: Helvetica, Arial, sans-serif; font-size: 9.5pt; color: #262626; margin: 0; }
+  h2.section { font-size: 10.5pt; color: #16324f; margin: 16px 0 4px 0; }
+
+  table.header-row { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
+  table.header-row td { vertical-align: top; padding: 0; }
+  .doc-title { font-size: 22pt; color: #333333; text-align: right; }
+  .doc-subtitle { font-size: 10.5pt; color: #333333; text-align: right; margin-top: 2px; }
+  .status-pill {
+    display: inline; color: #ffffff; font-size: 7.5pt; font-weight: bold;
+    padding: 2px 8px; background-color: {{ status_color }}; margin-top: 5px;
+  }
+  .status-wrap { text-align: right; margin-top: 5px; }
+
+  .co-name { font-weight: bold; font-size: 10.5pt; color: #262626; margin-top: 6px; }
+  .co-detail { color: #4a4a4a; font-size: 9pt; margin-top: 1px; }
+
+  table.order-meta { border-collapse: collapse; margin-top: 10px; margin-left: auto; width: 300px; }
+  table.order-meta td { padding: 2px 0; font-size: 9pt; }
+  table.order-meta td.m-label { color: #6a6a6a; text-align: right; width: 130px; padding-right: 8px; }
+  table.order-meta td.m-value { color: #262626; font-weight: bold; text-align: right; width: 170px; }
+
+  table.parties { width: 100%; border-collapse: collapse; margin-top: 16px; }
+  table.parties td.party-cell { width: 48%; vertical-align: top; font-size: 9pt; }
+  table.parties td.spacer { width: 4%; }
+  .party-label { color: #6a6a6a; font-size: 8pt; font-weight: bold; text-transform: uppercase; margin-bottom: 3px; }
+  .party-name { font-weight: bold; font-size: 10pt; color: #262626; margin-bottom: 2px; }
+
+  .pos-line { font-size: 9pt; color: #4a4a4a; margin-top: 12px; }
+
+  table.items { width: 100%; border-collapse: collapse; margin-top: 14px; }
+  table.items th {
+    background-color: #16324f; color: #ffffff; font-size: 8.5pt;
+    padding: 7px 8px; text-align: left; border: none; font-weight: normal;
+  }
+  table.items td { padding: 8px 8px; font-size: 9pt; border-bottom: 1px solid #e6e6e6; vertical-align: top; }
+  .text-end { text-align: right; }
+  .item-name { font-weight: bold; color: #262626; }
+
+  table.totals { width: 45%; margin-left: 55%; border-collapse: collapse; margin-top: 4px; }
+  table.totals td { padding: 6px 8px; font-size: 9.5pt; }
+  table.totals .t-label { color: #4a4a4a; }
+  table.totals .t-value { text-align: right; }
+  table.totals tr.grand td {
+    background-color: #f0f0f0; color: #262626; font-weight: bold; font-size: 10.5pt;
+    padding: 8px; border-top: 1.5px solid #333333;
+  }
+
+  .notes-text { font-size: 8.5pt; color: #4a4a4a; margin-top: 4px; line-height: 1.5; }
+
+  table.signature { width: 100%; border-collapse: collapse; margin-top: 46px; }
+  table.signature td.sig-cell { width: 45%; }
+  .sig-line { border-top: 1px solid #333333; padding-top: 4px; font-size: 8.5pt; color: #4a4a4a; }
+
+  .footer { margin-top: 18px; padding-top: 6px; border-top: 1px solid #e6e6e6; font-size: 7.5pt; color: #a0a0a0; text-align: center; }
+</style>
+</head>
+<body>
+
+<table class="header-row">
+  <tr>
+    <td style="width: 55%;">
+      {% if logo_path %}
+      <img src="{{ logo_path }}" style="width: 170px; height: 52px;" />
+      {% endif %}
+      <div class="co-name">{{ company.name if company else "Logika Systems India Pvt Ltd" }}</div>
+      {% if company and company.address %}
+      <div class="co-detail">{{ company.address|nl2br }}</div>
+      {% endif %}
+      {% if company and company.gstin %}<div class="co-detail">GSTIN {{ company.gstin }}</div>{% endif %}
+    </td>
+    <td style="width: 45%;">
+      <div class="doc-title">TAX INVOICE</div>
+      <div class="doc-subtitle">Invoice# {{ invoice.invoice_no }}</div>
+      <div class="status-wrap"><span class="status-pill">{{ invoice.status|upper }}</span></div>
+      <table class="order-meta">
+        <tr><td class="m-label">Invoice Date :</td><td class="m-value">{{ invoice.invoice_date|dt('%d-%m-%Y') }}</td></tr>
+        <tr><td class="m-label">Sales Order# :</td><td class="m-value">{{ invoice.sales_order.order_no }}</td></tr>
+        {% if invoice.sales_order.customer_po_no %}
+        <tr><td class="m-label">Customer PO No :</td><td class="m-value">{{ invoice.sales_order.customer_po_no }}</td></tr>
+        {% endif %}
+      </table>
+    </td>
+  </tr>
+</table>
+
+<table class="parties">
+  <tr>
+    <td class="party-cell">
+      <div class="party-label">Bill To</div>
+      <div class="party-name">{{ invoice.bill_to_name or invoice.sales_order.customer.name }}</div>
+      {% if invoice.bill_to_address %}<div>{{ invoice.bill_to_address|nl2br }}</div>{% endif %}
+      {% set bill_city_parts = [invoice.bill_to_city, invoice.bill_to_state, invoice.bill_to_country]|select|list %}
+      {% if bill_city_parts %}<div>{{ bill_city_parts|join(', ') }}</div>{% endif %}
+      {% if invoice.bill_to_gstin %}<div style="margin-top: 2px;">GSTIN {{ invoice.bill_to_gstin }}</div>{% endif %}
+    </td>
+    <td class="spacer"></td>
+    <td class="party-cell">
+      <div class="party-label">Ship To</div>
+      <div class="party-name">{{ invoice.ship_to_name or invoice.sales_order.customer.name }}</div>
+      {% if invoice.ship_to_address %}<div>{{ invoice.ship_to_address|nl2br }}</div>{% endif %}
+      {% set ship_city_parts = [invoice.ship_to_city, invoice.ship_to_state, invoice.ship_to_country]|select|list %}
+      {% if ship_city_parts %}<div>{{ ship_city_parts|join(', ') }}</div>{% endif %}
+      {% if invoice.ship_to_gstin %}<div style="margin-top: 2px;">GSTIN {{ invoice.ship_to_gstin }}</div>{% endif %}
+    </td>
+  </tr>
+</table>
+
+{% if invoice.ship_to_state %}
+<div class="pos-line">Place Of Supply: {{ invoice.ship_to_state }}</div>
+{% endif %}
+
+<table class="items">
+  <thead>
+    <tr>
+      <th style="width: 5%;">#</th>
+      <th style="width: 29%;">Item &amp; Description</th>
+      <th style="width: 10%;">HSN/SAC</th>
+      <th style="width: 9%;" class="text-end">Qty</th>
+      <th style="width: 13%;" class="text-end">Rate</th>
+      <th style="width: 8%;" class="text-end">GST%</th>
+      <th style="width: 12%;" class="text-end">GST Amt</th>
+      <th style="width: 14%;" class="text-end">Amount</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for line in invoice.items %}
+  {% set line_gst_amt = (line.total|float) * ((line.gst_percentage or 0)|float) / 100 %}
+    <tr>
+      <td>{{ loop.index }}</td>
+      <td class="item-name">{{ line.item.name }}</td>
+      <td>{{ line.hsn_code or "-" }}</td>
+      <td class="text-end">{{ line.quantity|qty }}</td>
+      <td class="text-end">{{ line.unit_price|inr }}</td>
+      <td class="text-end">{{ ("%.2f"|format(line.gst_percentage)) if line.gst_percentage is not none else "0.00" }}</td>
+      <td class="text-end">{{ line_gst_amt|inr }}</td>
+      <td class="text-end">{{ line.total|inr }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<table class="totals">
+  <tr><td class="t-label">Sub Total</td><td class="t-value">{{ invoice.total_amount|inr }}</td></tr>
+  <tr><td class="t-label">GST</td><td class="t-value">{{ (invoice.gst_amount or 0)|inr }}</td></tr>
+  <tr class="grand"><td>Total</td><td class="t-value">{{ (invoice.total_amount + (invoice.gst_amount or 0))|inr }}</td></tr>
+</table>
+
+{% if invoice.notes %}
+<h2 class="section">Notes</h2>
+<div class="notes-text">{{ invoice.notes|nl2br }}</div>
+{% endif %}
+
+<table class="signature">
+  <tr>
+    <td></td>
+    <td class="sig-cell"><div class="sig-line">Authorized Signature</div></td>
+  </tr>
+</table>
+
+<div class="footer">
+  This is a system-generated document &nbsp;·&nbsp; Generated on {{ generated_at|dt('%d-%b-%Y %H:%M') }} IST
+</div>
+
+</body>
+</html>

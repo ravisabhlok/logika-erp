@@ -54,6 +54,9 @@
       <a href="/sales/payments-due" class="nav-item {{ 'active' if request.url.path.startswith('/sales/payments-due') else '' }}">
         <i class="bi bi-cash-coin"></i><span>Payments Due</span>
       </a>
+      <a href="/invoices" class="nav-item {{ 'active' if request.url.path.startswith('/invoices') else '' }}">
+        <i class="bi bi-receipt"></i><span>Invoices</span>
+      </a>
       <a href="/purchase" class="nav-item {{ 'active' if request.url.path.startswith('/purchase') and not request.url.path.startswith('/purchase/requirements') else '' }}">
         <i class="bi bi-bag-check"></i><span>Purchase</span>
       </a>

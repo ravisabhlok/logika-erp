@@ -18,6 +18,7 @@ MODULES = [
     ("vendors", "Vendors"),
     ("items", "Items"),
     ("sales", "Sales"),
+    ("invoices", "Invoices"),
     ("purchase", "Purchase"),
     ("inventory", "Inventory"),
     ("production", "Production"),
