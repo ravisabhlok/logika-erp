@@ -48,8 +48,19 @@ templates.env.filters["nl2br"] = _nl2br
 
 
 def next_order_no(db: Session) -> str:
-    count = db.query(PurchaseOrder).count()
-    return f"PO-{count + 1:05d}"
+    """PO-00001, PO-00002, ... — derived from the highest existing numeric
+    suffix, not a row count. A row count breaks the moment any order other
+    than the most recent one is deleted: the count drops but the highest
+    number in use doesn't, so the next generated number can collide with
+    one that's still there (this is what caused the duplicate-key error on
+    2026-08-19 — a deleted draft order left a gap)."""
+    existing = db.query(PurchaseOrder.order_no).filter(PurchaseOrder.order_no.like("PO-%")).all()
+    max_n = 0
+    for (order_no,) in existing:
+        suffix = order_no[len("PO-"):]
+        if suffix.isdigit():
+            max_n = max(max_n, int(suffix))
+    return f"PO-{max_n + 1:05d}"
 
 
 def compute_global_requirements(db: Session):

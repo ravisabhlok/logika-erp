@@ -80,14 +80,20 @@ def _financial_year_label(dt: datetime) -> str:
 
 
 def next_invoice_no(db: Session, invoice_date: datetime) -> str:
-    """INV/<FY>/0001, resetting every financial year (1-Apr) — counts
-    existing invoice_no values that already use this FY's prefix, same
-    'count what's there' approach as SalesOrder.order_no/
-    PurchaseOrder.order_no, just scoped to the FY prefix instead of the
-    whole table so the sequence actually resets each April."""
+    """INV/<FY>/0001, resetting every financial year (1-Apr) — derived from
+    the highest existing numeric suffix within this FY's prefix, not a row
+    count. A row count breaks the moment a draft invoice (the only kind
+    that can be deleted) other than the most recent one is removed, since
+    the count drops but the highest number in use doesn't — same class of
+    bug fixed in purchase.py/sales.py's next_order_no on 2026-08-19."""
     prefix = f"INV/{_financial_year_label(invoice_date)}/"
-    count = db.query(Invoice).filter(Invoice.invoice_no.like(f"{prefix}%")).count()
-    return f"{prefix}{count + 1:04d}"
+    existing = db.query(Invoice.invoice_no).filter(Invoice.invoice_no.like(f"{prefix}%")).all()
+    max_n = 0
+    for (invoice_no,) in existing:
+        suffix = invoice_no[len(prefix):]
+        if suffix.isdigit():
+            max_n = max(max_n, int(suffix))
+    return f"{prefix}{max_n + 1:04d}"
 
 
 def remaining_to_invoice(db: Session, sales_order_item: SalesOrderItem, exclude_invoice_id: int = None) -> float:

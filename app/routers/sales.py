@@ -46,8 +46,16 @@ templates.env.globals["now"] = datetime.utcnow
 
 
 def next_order_no(db: Session) -> str:
-    count = db.query(SalesOrder).count()
-    return f"SO-{count + 1:05d}"
+    """SO-00001, SO-00002, ... — derived from the highest existing numeric
+    suffix, not a row count (see purchase.py's next_order_no for why a row
+    count is unsafe once any non-final order can be deleted)."""
+    existing = db.query(SalesOrder.order_no).filter(SalesOrder.order_no.like("SO-%")).all()
+    max_n = 0
+    for (order_no,) in existing:
+        suffix = order_no[len("SO-"):]
+        if suffix.isdigit():
+            max_n = max(max_n, int(suffix))
+    return f"SO-{max_n + 1:05d}"
 
 
 def _parse_date(value: str):
