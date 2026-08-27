@@ -1,9 +1,18 @@
 {% extends "base.html" %}
 {% block title %}Sales Orders{% endblock %}
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
   <h4 class="mb-0">Sales Orders</h4>
-  <div>
+  <div class="d-flex align-items-center gap-2 flex-wrap">
+    <input type="text" id="companyBox" class="form-control form-control-sm" style="width:200px;"
+           placeholder="Filter by company..." oninput="filterRows()">
+    <select id="statusBox" class="form-select form-select-sm" style="width:150px;" onchange="filterRows()">
+      <option value="">All statuses</option>
+      <option value="draft">Draft</option>
+      <option value="confirmed">Confirmed</option>
+      <option value="delivered">Delivered</option>
+      <option value="cancelled">Cancelled</option>
+    </select>
     <a href="/sales/payments-due" class="btn btn-outline-primary btn-sm">Payments Due</a>
     {% if perms.add %}
     <a href="/sales/new" class="btn btn-dark btn-sm">+ New Sales Order</a>
@@ -11,11 +20,12 @@
   </div>
 </div>
 <div class="card p-3">
-  <table class="table table-hover align-middle mb-0">
+  <table class="table table-hover align-middle mb-0" id="salesTable">
     <thead><tr><th>Order#</th><th>Customer</th><th>Date</th><th>Status</th><th class="text-end">Total</th></tr></thead>
     <tbody>
     {% for o in orders %}
-      <tr onclick="window.location='/sales/{{ o.id }}'" style="cursor:pointer;">
+      <tr onclick="window.location='/sales/{{ o.id }}'" style="cursor:pointer;"
+          data-company="{{ o.customer.name|lower }}" data-status="{{ o.status }}">
         <td>{{ o.order_no }}</td>
         <td>{{ o.customer.name }}</td>
         <td>{{ o.order_date|dt('%d-%b-%Y') }}</td>
@@ -27,5 +37,25 @@
     {% endfor %}
     </tbody>
   </table>
+  <p class="text-muted text-center mt-2 mb-0" id="noSalesResults" style="display:none;">No sales orders match your filters.</p>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  function filterRows() {
+    const company = document.getElementById('companyBox').value.trim().toLowerCase();
+    const status = document.getElementById('statusBox').value;
+    const rows = document.querySelectorAll('#salesTable tbody tr[data-company]');
+    let visibleCount = 0;
+    rows.forEach(row => {
+      const companyMatch = !company || row.dataset.company.includes(company);
+      const statusMatch = !status || row.dataset.status === status;
+      const match = companyMatch && statusMatch;
+      row.style.display = match ? '' : 'none';
+      if (match) visibleCount++;
+    });
+    document.getElementById('noSalesResults').style.display = (rows.length && visibleCount === 0) ? 'block' : 'none';
+  }
+</script>
 {% endblock %}
