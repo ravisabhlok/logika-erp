@@ -598,6 +598,21 @@ def update_sales_status(
     old_status = order.status
 
     if new_status == "delivered" and order.status != "delivered":
+        # Validate stock for every line before touching anything — same
+        # guard as production.py's complete_production_order, so a
+        # delivery can never push an item's stock negative.
+        shortages = []
+        for line in order.items:
+            item = db.query(Item).get(line.item_id)
+            available = float(item.current_stock or 0)
+            if available < line.quantity:
+                shortages.append(f"{item.name}: need {line.quantity:g}, have {available:g}")
+        if shortages:
+            return RedirectResponse(
+                url=f"/sales/{order_id}?error=Not enough stock to deliver: " + "; ".join(shortages),
+                status_code=303,
+            )
+
         # Deduct stock and log a stock-out transaction for each line item.
         for line in order.items:
             item = db.query(Item).get(line.item_id)

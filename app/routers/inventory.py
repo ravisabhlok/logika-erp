@@ -54,10 +54,15 @@ def submit_adjustment(
         # column) — Python refuses to mix Decimal and float in arithmetic
         # (raises TypeError), so cast to float first, same as the Decimal
         # item fields are handled in sales.py/purchase.py.
+        if direction == "decrease" and quantity > old_stock:
+            return RedirectResponse(
+                url=f"/inventory?error=Cannot reduce {item.name}: only {old_stock:g} in stock, tried to remove {quantity:g}",
+                status_code=303,
+            )
         if direction == "decrease":
-            item.current_stock = float(item.current_stock or 0) - quantity
+            item.current_stock = old_stock - quantity
         else:
-            item.current_stock = float(item.current_stock or 0) + quantity
+            item.current_stock = old_stock + quantity
         db.add(StockTransaction(
             item_id=item.id,
             transaction_type="ADJUST",

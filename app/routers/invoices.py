@@ -551,6 +551,18 @@ async def issue_invoice(invoice_id: int, request: Request, db: Session = Depends
     serials_by_line = {}
 
     if not billing_only:
+        # Stock sufficiency for non-serialized lines — serialized lines are
+        # already guaranteed not to go negative by the "must be a
+        # currently unshipped serial" check further down (there can only
+        # be as many unshipped serials as there is stock), but a plain
+        # quantity-based line had no floor at all until now.
+        for line in invoice.items:
+            if line.item.has_serial:
+                continue
+            available = float(line.item.current_stock or 0)
+            if available < line.quantity:
+                errors[line.id] = f"Not enough stock: need {line.quantity:g}, have {available:g}"
+
         # Validate serial counts for every serialized line before writing
         # anything — same two-pass validate-then-commit shape as
         # purchase.py's receive_purchase_order.
