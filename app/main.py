@@ -1,3 +1,5 @@
+import os
+
 from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -18,6 +20,21 @@ app.add_middleware(SessionMiddleware, secret_key=settings.SECRET_KEY)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 templates = Jinja2Templates(directory="app/templates")
+
+# Cache-busting token for static assets: the mtime of custom.css, appended
+# as a ?v= query param on its <link> tag in base.html. Without this, a
+# browser that already fetched custom.css keeps using its cached copy
+# indefinitely (no server-side change ever alters the URL), so a sidebar/
+# style fix deployed here can silently fail to appear for LAN users until
+# they manually hard-refresh -- this happened with the Purchase dropdown
+# grouping (2026-09-09). Changing the file changes its mtime, which changes
+# the URL, which forces every browser to re-fetch it on the next load.
+_custom_css_path = os.path.join(os.path.dirname(__file__), "static", "custom.css")
+try:
+    STATIC_VERSION = int(os.path.getmtime(_custom_css_path))
+except OSError:
+    STATIC_VERSION = 0
+templates.env.globals["static_version"] = STATIC_VERSION
 
 
 @app.exception_handler(NotAuthenticatedException)

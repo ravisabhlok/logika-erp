@@ -9,4 +9,7 @@ On the office server (SSH in as yourself, then):
 cd /opt/logika-erp
 sudo -u erp git pull origin main
 sudo -u erp ./venv/bin/alembic upgrade head
-sudo -u erp ./venv/bin/python run.py
+
+sudo systemctl restart logika-erp
+sudo systemctl status logika-erp
+
