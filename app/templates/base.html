@@ -39,30 +39,35 @@
       <a href="/" class="nav-item {{ 'active' if request.url.path == '/' else '' }}">
         <i class="bi bi-speedometer2"></i><span>Dashboard</span>
       </a>
-      <a href="/customers" class="nav-item {{ 'active' if request.url.path.startswith('/customers') else '' }}">
-        <i class="bi bi-people"></i><span>Customers</span>
-      </a>
-      <a href="/vendors" class="nav-item {{ 'active' if request.url.path.startswith('/vendors') else '' }}">
-        <i class="bi bi-truck"></i><span>Vendors</span>
-      </a>
-      <a href="/items" class="nav-item {{ 'active' if request.url.path.startswith('/items') else '' }}">
-        <i class="bi bi-box-seam"></i><span>Items</span>
-      </a>
-      <a href="/sales" class="nav-item {{ 'active' if request.url.path.startswith('/sales') and not request.url.path.startswith('/sales/payments-due') else '' }}">
-        <i class="bi bi-cart-check"></i><span>Sales</span>
-      </a>
-      <a href="/sales/payments-due" class="nav-item {{ 'active' if request.url.path.startswith('/sales/payments-due') else '' }}">
-        <i class="bi bi-cash-coin"></i><span>Payments Due</span>
-      </a>
-      <a href="/invoices" class="nav-item {{ 'active' if request.url.path.startswith('/invoices') else '' }}">
-        <i class="bi bi-receipt"></i><span>Invoices</span>
-      </a>
-      <div class="nav-group {{ 'open' if request.url.path.startswith('/purchase') or request.url.path.startswith('/bills') else '' }}">
+      <div class="nav-group {{ 'open' if request.url.path.startswith('/customers') or request.url.path.startswith('/sales') or request.url.path.startswith('/invoices') else '' }}">
+        <button type="button" class="nav-item nav-group-toggle" onclick="toggleNavGroup(this)">
+          <i class="bi bi-cart-check"></i><span>Sales</span>
+          <i class="bi bi-chevron-down nav-group-caret"></i>
+        </button>
+        <div class="nav-group-items">
+          <a href="/customers" class="nav-item nav-subitem {{ 'active' if request.url.path.startswith('/customers') else '' }}">
+            <i class="bi bi-people"></i><span>Customers</span>
+          </a>
+          <a href="/sales" class="nav-item nav-subitem {{ 'active' if request.url.path.startswith('/sales') and not request.url.path.startswith('/sales/payments-due') else '' }}">
+            <i class="bi bi-cart-check"></i><span>Sales Orders</span>
+          </a>
+          <a href="/sales/payments-due" class="nav-item nav-subitem {{ 'active' if request.url.path.startswith('/sales/payments-due') else '' }}">
+            <i class="bi bi-cash-coin"></i><span>Payments Due</span>
+          </a>
+          <a href="/invoices" class="nav-item nav-subitem {{ 'active' if request.url.path.startswith('/invoices') else '' }}">
+            <i class="bi bi-receipt"></i><span>Invoices</span>
+          </a>
+        </div>
+      </div>
+      <div class="nav-group {{ 'open' if request.url.path.startswith('/purchase') or request.url.path.startswith('/bills') or request.url.path.startswith('/vendors') else '' }}">
         <button type="button" class="nav-item nav-group-toggle" onclick="toggleNavGroup(this)">
           <i class="bi bi-bag-check"></i><span>Purchase</span>
           <i class="bi bi-chevron-down nav-group-caret"></i>
         </button>
         <div class="nav-group-items">
+          <a href="/vendors" class="nav-item nav-subitem {{ 'active' if request.url.path.startswith('/vendors') else '' }}">
+            <i class="bi bi-truck"></i><span>Vendors</span>
+          </a>
           <a href="/purchase" class="nav-item nav-subitem {{ 'active' if request.url.path.startswith('/purchase') and not request.url.path.startswith('/purchase/requirements') else '' }}">
             <i class="bi bi-receipt"></i><span>Purchase Orders</span>
           </a>
@@ -74,11 +79,22 @@
           </a>
         </div>
       </div>
+      <div class="nav-group {{ 'open' if request.url.path.startswith('/items') or request.url.path.startswith('/inventory') else '' }}">
+        <button type="button" class="nav-item nav-group-toggle" onclick="toggleNavGroup(this)">
+          <i class="bi bi-box-seam"></i><span>Items</span>
+          <i class="bi bi-chevron-down nav-group-caret"></i>
+        </button>
+        <div class="nav-group-items">
+          <a href="/items" class="nav-item nav-subitem {{ 'active' if request.url.path.startswith('/items') else '' }}">
+            <i class="bi bi-box-seam"></i><span>Items</span>
+          </a>
+          <a href="/inventory" class="nav-item nav-subitem {{ 'active' if request.url.path.startswith('/inventory') else '' }}">
+            <i class="bi bi-clipboard-data"></i><span>Inventory</span>
+          </a>
+        </div>
+      </div>
       <a href="/production" class="nav-item {{ 'active' if request.url.path.startswith('/production') else '' }}">
         <i class="bi bi-gear-wide-connected"></i><span>Production</span>
-      </a>
-      <a href="/inventory" class="nav-item {{ 'active' if request.url.path.startswith('/inventory') else '' }}">
-        <i class="bi bi-clipboard-data"></i><span>Inventory</span>
       </a>
       {% if user.role == 'admin' %}
       <a href="/users" class="nav-item {{ 'active' if request.url.path.startswith('/users') or request.url.path.startswith('/roles') else '' }}">
