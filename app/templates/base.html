@@ -57,12 +57,23 @@
       <a href="/invoices" class="nav-item {{ 'active' if request.url.path.startswith('/invoices') else '' }}">
         <i class="bi bi-receipt"></i><span>Invoices</span>
       </a>
-      <a href="/purchase" class="nav-item {{ 'active' if request.url.path.startswith('/purchase') and not request.url.path.startswith('/purchase/requirements') else '' }}">
-        <i class="bi bi-bag-check"></i><span>Purchase</span>
-      </a>
-      <a href="/purchase/requirements" class="nav-item {{ 'active' if request.url.path.startswith('/purchase/requirements') else '' }}">
-        <i class="bi bi-clipboard-check"></i><span>What to Order</span>
-      </a>
+      <div class="nav-group {{ 'open' if request.url.path.startswith('/purchase') or request.url.path.startswith('/bills') else '' }}">
+        <button type="button" class="nav-item nav-group-toggle" onclick="toggleNavGroup(this)">
+          <i class="bi bi-bag-check"></i><span>Purchase</span>
+          <i class="bi bi-chevron-down nav-group-caret"></i>
+        </button>
+        <div class="nav-group-items">
+          <a href="/purchase" class="nav-item nav-subitem {{ 'active' if request.url.path.startswith('/purchase') and not request.url.path.startswith('/purchase/requirements') else '' }}">
+            <i class="bi bi-receipt"></i><span>Purchase Orders</span>
+          </a>
+          <a href="/bills" class="nav-item nav-subitem {{ 'active' if request.url.path.startswith('/bills') else '' }}">
+            <i class="bi bi-receipt-cutoff"></i><span>Bills</span>
+          </a>
+          <a href="/purchase/requirements" class="nav-item nav-subitem {{ 'active' if request.url.path.startswith('/purchase/requirements') else '' }}">
+            <i class="bi bi-clipboard-check"></i><span>What to Order</span>
+          </a>
+        </div>
+      </div>
       <a href="/production" class="nav-item {{ 'active' if request.url.path.startswith('/production') else '' }}">
         <i class="bi bi-gear-wide-connected"></i><span>Production</span>
       </a>
@@ -123,6 +134,16 @@
       const collapsed = document.documentElement.classList.toggle('sidebar-collapsed');
       localStorage.setItem('sidebarCollapsed', collapsed ? '1' : '0');
     });
+  }
+
+  // Expand/collapse a grouped sidebar section (e.g. Purchase -> Purchase
+  // Orders / Bills / What to Order) without navigating anywhere itself —
+  // the group header is a <button>, not a link, on purpose. Which section
+  // starts open is decided server-side in base.html (the 'open' class, set
+  // from the current request path), so no localStorage bookkeeping is
+  // needed here.
+  function toggleNavGroup(btn) {
+    btn.closest('.nav-group').classList.toggle('open');
   }
 
   // Indian-style currency formatting (lakh/crore comma grouping, 2 decimals —

@@ -167,6 +167,7 @@ class Vendor(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     purchase_orders = relationship("PurchaseOrder", back_populates="vendor")
+    bills = relationship("Bill", back_populates="vendor")
 
 
 class Category(Base):
@@ -608,6 +609,7 @@ class PurchaseOrder(Base):
 
     vendor = relationship("Vendor", back_populates="purchase_orders")
     items = relationship("PurchaseOrderItem", back_populates="purchase_order", cascade="all, delete-orphan")
+    bills = relationship("Bill", back_populates="purchase_order")
     approved_by_user = relationship("User", foreign_keys=[approved_by])
     confirmed_by_user = relationship("User", foreign_keys=[confirmed_by])
 
@@ -621,10 +623,155 @@ class PurchaseOrderItem(Base):
     quantity = Column(Numeric(14, 4), nullable=False)
     unit_price = Column(Numeric(12, 2), nullable=False)
     total = Column(Numeric(14, 2), nullable=False)
+    # Per-line, not per-order: unlike SalesOrder.expected_shipment_date (one
+    # date for the whole order), a single PO commonly bundles items from
+    # different lead times off the same vendor, so each line tracks its own
+    # expected delivery date. Optional/nullable so existing orders and lines
+    # created without one aren't broken. Parsed from a bare <input
+    # type=date> via purchase.py's _parse_date() as a naive midnight
+    # datetime — same convention as SalesOrder.expected_shipment_date, so it
+    # displays with a plain .strftime() in templates, never the IST-shifting
+    # `dt` filter (see format_dt's docstring for why).
+    expected_delivery_date = Column(DateTime, nullable=True)
 
     purchase_order = relationship("PurchaseOrder", back_populates="items")
     item = relationship("Item")
     serials = relationship("ItemSerial", back_populates="purchase_order_item", cascade="all, delete-orphan")
+
+
+# ---------------------------------------------------------------------------
+# Bills (vendor bills / accounts payable) — see
+# claude/vendor-bills-design.md for the full design discussion this was
+# built from.
+# ---------------------------------------------------------------------------
+
+class Bill(Base):
+    """A vendor's own bill/invoice for goods actually supplied — the
+    accounts-payable counterpart to Invoice (accounts-receivable).
+    `purchase_order_id` is set when this bill documents a PO that went
+    through the normal approval -> ordered -> received workflow; left null
+    for a purchase made with no PO at all.
+
+    The two cases behave very differently underneath, both handled in
+    app/routers/bills.py:
+      - PO-based bill (purchase_order_id set): the PO's own Receive step
+        already moved stock and captured serials
+        (purchase.py:receive_purchase_order). This bill is a document-level
+        record only — vendor's bill number/date, the billed amount and GST,
+        an optional scanned attachment — and never touches stock itself.
+        `stock_updated` stays False.
+      - No-PO bill (purchase_order_id null): nothing has recorded this
+        purchase anywhere yet, so *creating* this bill is what moves stock —
+        its BillItem lines increase Item.current_stock (and, for a
+        has_serial item, require serial numbers) exactly as a PO receipt
+        would have, all in one step since the purchase already happened.
+        `stock_updated` is set True once that's done.
+
+    Payment tracking: `amount_paid`/`status` are kept in sync from the sum
+    of this bill's BillPayment rows (see recompute_status in
+    app/routers/bills.py) rather than being hand-edited — same
+    "derive, don't hand-maintain" approach as
+    InvoiceItem/remaining_to_invoice elsewhere in this app. BillPayment is
+    kept as its own table (not just a running total) so a bulk bank-payment
+    Excel export / payment report can be built as follow-up work without a
+    schema change — not built yet, per the user's own "future plan" note.
+    """
+    __tablename__ = "bills"
+
+    id = Column(Integer, primary_key=True)
+    # Internal system reference, financial-year scoped like invoice_no
+    # (BILL/25-26/0001, resets every April) — see next_bill_ref in
+    # app/routers/bills.py. Distinct from vendor_bill_no below, which is
+    # whatever number the vendor printed on their own bill.
+    bill_ref = Column(String(40), unique=True, nullable=False, index=True)
+    vendor_id = Column(Integer, ForeignKey("vendors.id"), nullable=False)
+    purchase_order_id = Column(Integer, ForeignKey("purchase_orders.id"), nullable=True)
+
+    vendor_bill_no = Column(String(60), nullable=False)
+    bill_date = Column(DateTime, nullable=False)
+    due_date = Column(DateTime, nullable=True)
+
+    taxable_amount = Column(Numeric(14, 2), default=0)
+    gst_amount = Column(Numeric(14, 2), default=0)
+    total_amount = Column(Numeric(14, 2), default=0, nullable=False)
+    amount_paid = Column(Numeric(14, 2), default=0, nullable=False)
+
+    status = Column(
+        Enum("unpaid", "partially_paid", "paid", "cancelled", name="bill_status"),
+        default="unpaid", nullable=False,
+    )
+    notes = Column(Text, nullable=True)
+
+    attachment_original_filename = Column(String(255), nullable=True)
+    attachment_stored_filename = Column(String(255), nullable=True)
+
+    stock_updated = Column(Boolean, default=False, nullable=False)
+
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    cancelled_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    cancelled_at = Column(DateTime, nullable=True)
+
+    vendor = relationship("Vendor", back_populates="bills")
+    purchase_order = relationship("PurchaseOrder", back_populates="bills")
+    items = relationship("BillItem", back_populates="bill", cascade="all, delete-orphan", order_by="BillItem.id")
+    payments = relationship("BillPayment", back_populates="bill", cascade="all, delete-orphan", order_by="BillPayment.id")
+    created_by_user = relationship("User", foreign_keys=[created_by])
+    cancelled_by_user = relationship("User", foreign_keys=[cancelled_by])
+
+
+class BillItem(Base):
+    """One line of a Bill. For a PO-based bill these are pre-filled from the
+    PO's own lines (purchase_order_item_id set) purely for the record —
+    quantities here never move stock, since the PO's Receive step already
+    did that. For a no-PO bill, purchase_order_item_id is null and this
+    line's quantity is exactly what create_bill adds to stock (and, for a
+    has_serial item, the serials captured against it).
+
+    unit_price/gst_percentage/hsn_code are snapshotted here as of bill time
+    (not read live off Item) — same "freeze what was actually billed"
+    reasoning as InvoiceItem.
+    """
+    __tablename__ = "bill_items"
+
+    id = Column(Integer, primary_key=True)
+    bill_id = Column(Integer, ForeignKey("bills.id"), nullable=False)
+    purchase_order_item_id = Column(Integer, ForeignKey("purchase_order_items.id"), nullable=True)
+    item_id = Column(Integer, ForeignKey("items.id"), nullable=False)
+    quantity = Column(Numeric(14, 4), nullable=False)
+    unit_price = Column(Numeric(12, 2), nullable=False)
+    gst_percentage = Column(Numeric(5, 2), nullable=True, default=0)
+    hsn_code = Column(String(10), nullable=True)
+    total = Column(Numeric(14, 2), nullable=False)
+
+    bill = relationship("Bill", back_populates="items")
+    purchase_order_item = relationship("PurchaseOrderItem")
+    item = relationship("Item")
+    serials = relationship("ItemSerial", back_populates="bill_item")
+
+
+class BillPayment(Base):
+    """One payment made against a Bill. Kept as its own table (rather than a
+    single amount_paid field the user edits directly) so each part-payment
+    is on record with its own date/mode/reference — the base for the
+    payment report / bulk-bank-payment Excel export the user wants as
+    follow-up work; nothing here builds that yet. Bill.amount_paid/status
+    are recomputed from these rows, never edited directly (see
+    app/routers/bills.py:recompute_bill_status)."""
+    __tablename__ = "bill_payments"
+
+    id = Column(Integer, primary_key=True)
+    bill_id = Column(Integer, ForeignKey("bills.id"), nullable=False)
+    payment_date = Column(DateTime, default=datetime.utcnow, nullable=False)
+    amount = Column(Numeric(14, 2), nullable=False)
+    mode = Column(String(30), nullable=True)
+    reference_no = Column(String(80), nullable=True)
+    notes = Column(Text, nullable=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    bill = relationship("Bill", back_populates="payments")
+    created_by_user = relationship("User", foreign_keys=[created_by])
 
 
 # ---------------------------------------------------------------------------
@@ -721,6 +868,12 @@ class ItemSerial(Base):
     purchase_order_item_id = Column(Integer, ForeignKey("purchase_order_items.id"), nullable=True)
     production_order_id = Column(Integer, ForeignKey("production_orders.id"), nullable=True)
     invoice_item_id = Column(Integer, ForeignKey("invoice_items.id"), nullable=True)
+    # Set when this serial was captured by recording a no-PO Bill directly
+    # (see BillItem/Bill in this file) rather than by receiving a Purchase
+    # Order — exactly one of purchase_order_item_id / bill_item_id /
+    # production_order_id is set per row in practice, same "validate in the
+    # route, not the schema" style as the other two origins above.
+    bill_item_id = Column(Integer, ForeignKey("bill_items.id"), nullable=True)
     received_at = Column(DateTime, default=datetime.utcnow)
     shipped_at = Column(DateTime, nullable=True)
 
@@ -728,6 +881,7 @@ class ItemSerial(Base):
     purchase_order = relationship("PurchaseOrder")
     purchase_order_item = relationship("PurchaseOrderItem", back_populates="serials")
     invoice_item = relationship("InvoiceItem", back_populates="serials")
+    bill_item = relationship("BillItem", back_populates="serials")
     production_order = relationship("ProductionOrder", back_populates="serials")
 
 

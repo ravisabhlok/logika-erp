@@ -20,6 +20,7 @@ MODULES = [
     ("sales", "Sales"),
     ("invoices", "Invoices"),
     ("purchase", "Purchase"),
+    ("bills", "Bills"),
     ("inventory", "Inventory"),
     ("production", "Production"),
 ]

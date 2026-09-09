@@ -27,7 +27,7 @@
     </div>
 
     <table class="table table-sm" id="lineTable">
-      <thead><tr><th style="width:320px;">Item</th><th style="width:120px;">Qty</th><th style="width:140px;">Unit Price</th><th style="width:120px;">Line Total</th><th></th></tr></thead>
+      <thead><tr><th style="width:280px;">Item</th><th style="width:110px;">Qty</th><th style="width:130px;">Unit Price</th><th style="width:150px;">Delivery Date</th><th style="width:120px;">Line Total</th><th></th></tr></thead>
       <tbody></tbody>
     </table>
     <button type="button" class="btn btn-outline-secondary btn-sm mb-3" onclick="addRow()">+ Add Line</button>
@@ -101,10 +101,10 @@ const items = [
   {% for i in items %}{ id: {{ i.id }}, name: {{ i.name|tojson }}, price: {{ i.purchase_price|float }}, stock: {{ i.current_stock|float }} },{% endfor %}
 ];
 const submittedLines = [
-  {% for l in submitted.lines %}{ item_id: {{ l.item_id }}, quantity: {{ l.quantity|tojson }}, unit_price: {{ l.unit_price|tojson }} },{% endfor %}
+  {% for l in submitted.lines %}{ item_id: {{ l.item_id }}, quantity: {{ l.quantity|tojson }}, unit_price: {{ l.unit_price|tojson }}, delivery_date: {{ l.delivery_date|tojson }} },{% endfor %}
 ];
 
-function addRow(selectedId, qty, price) {
+function addRow(selectedId, qty, price, deliveryDate) {
   const tbody = document.querySelector('#lineTable tbody');
   const row = document.createElement('tr');
   row.innerHTML = `
@@ -117,6 +117,7 @@ function addRow(selectedId, qty, price) {
     </td>
     <td><input type="number" name="quantity" class="form-control form-control-sm qty-input" min="0.0001" step="any" value="${qty || 1}" oninput="recalcRow(this)"></td>
     <td><input type="number" step="0.01" name="unit_price" class="form-control form-control-sm price-input" value="${price != null ? price : '0.00'}" oninput="recalcRow(this)"></td>
+    <td><input type="date" name="delivery_date" class="form-control form-control-sm delivery-date-input" value="${deliveryDate || ''}"></td>
     <td><span class="line-total">0.00</span></td>
     <td><button type="button" class="btn btn-sm btn-outline-danger" onclick="this.closest('tr').remove(); recalcTotal();">x</button></td>
   `;
@@ -235,7 +236,7 @@ function recalcTotal() {
 }
 
 if (submittedLines.length) {
-  submittedLines.forEach(l => addRow(l.item_id, l.quantity, l.unit_price));
+  submittedLines.forEach(l => addRow(l.item_id, l.quantity, l.unit_price, l.delivery_date));
 } else {
   addRow();
 }

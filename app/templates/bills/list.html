@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Bills{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">Bills</h4>
+  {% if perms.add %}
+  <a href="/bills/new" class="btn btn-dark btn-sm">+ New Bill (no PO)</a>
+  {% endif %}
+</div>
+<div class="card p-3">
+  <table class="table table-hover align-middle mb-0">
+    <thead><tr><th>Bill Ref</th><th>Vendor</th><th>Vendor Bill No</th><th>Bill Date</th><th>Against PO</th><th>Status</th><th class="text-end">Total</th><th class="text-end">Balance</th></tr></thead>
+    <tbody>
+    {% for b in bills %}
+      <tr onclick="window.location='/bills/{{ b.id }}'" style="cursor:pointer;">
+        <td>{{ b.bill_ref }}</td>
+        <td>{{ b.vendor.name }}</td>
+        <td>{{ b.vendor_bill_no }}</td>
+        <td>{{ b.bill_date.strftime('%d-%b-%Y') }}</td>
+        <td>{% if b.purchase_order %}<span class="text-muted small">{{ b.purchase_order.order_no }}</span>{% else %}<span class="badge bg-info text-dark">Direct — no PO</span>{% endif %}</td>
+        <td><span class="badge bg-{{ {'unpaid':'secondary','partially_paid':'warning text-dark','paid':'success','cancelled':'danger'}[b.status] }}">{{ b.status.replace('_', ' ') }}</span></td>
+        <td class="text-end">{{ b.total_amount|inr }}</td>
+        <td class="text-end">{{ (b.total_amount - b.amount_paid)|inr if b.status != 'cancelled' else '-' }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="8" class="text-muted text-center">No bills recorded yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

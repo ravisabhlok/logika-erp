@@ -1,0 +1,255 @@
+{% extends "base.html" %}
+{% block title %}{{ "Record Bill" if order else "New Bill" }}{% endblock %}
+{% block content %}
+<h4 class="mb-3">{{ "Record Bill against " ~ order.order_no if order else "New Bill (no PO)" }}</h4>
+{% if not order %}
+<p class="text-muted">For a purchase made without raising a PO first. Saving this adds the quantities below to stock right away.</p>
+{% endif %}
+
+{% if errors.get('_general') %}<div class="alert alert-danger">{{ errors['_general'] }}</div>{% endif %}
+
+<div class="card p-4">
+  <form method="post" action="/bills/new" enctype="multipart/form-data" id="billForm">
+    {% if order %}<input type="hidden" name="purchase_order_id" value="{{ order.id }}">{% endif %}
+
+    <div class="row">
+      <div class="col-md-4 mb-3">
+        <label class="form-label">Vendor</label>
+        {% if order %}
+          <input type="text" class="form-control" value="{{ order.vendor.name }}" disabled>
+        {% else %}
+          <select name="vendor_id" class="form-select {{ 'is-invalid' if errors.get('vendor_id') else '' }}" required>
+            <option value="">-- select vendor --</option>
+            {% for v in vendors %}<option value="{{ v.id }}" {% if submitted.vendor_id|string == v.id|string %}selected{% endif %}>{{ v.name }}</option>{% endfor %}
+          </select>
+          {% if errors.get('vendor_id') %}<div class="invalid-feedback d-block">{{ errors['vendor_id'] }}</div>{% endif %}
+        {% endif %}
+      </div>
+      <div class="col-md-3 mb-3">
+        <label class="form-label">Vendor Bill No *</label>
+        <input type="text" name="vendor_bill_no" class="form-control {{ 'is-invalid' if errors.get('vendor_bill_no') else '' }}" value="{{ submitted.vendor_bill_no or '' }}" required>
+        {% if errors.get('vendor_bill_no') %}<div class="invalid-feedback d-block">{{ errors['vendor_bill_no'] }}</div>{% endif %}
+      </div>
+      <div class="col-md-2 mb-3">
+        <label class="form-label">Bill Date *</label>
+        <input type="date" name="bill_date" class="form-control" value="{{ submitted.bill_date or bill_date }}" required>
+      </div>
+      <div class="col-md-2 mb-3">
+        <label class="form-label">Due Date</label>
+        <input type="date" name="due_date" class="form-control" value="{{ submitted.due_date or '' }}">
+      </div>
+      <div class="col-md-3 mb-3">
+        <label class="form-label">Attach Bill (image/PDF)</label>
+        <input type="file" name="attachment" class="form-control" accept=".jpg,.jpeg,.png,.gif,.webp,.pdf">
+      </div>
+    </div>
+
+    {% if order %}
+    <table class="table table-sm" id="lineTable">
+      <thead><tr><th>Item</th><th style="width:120px;">Qty</th><th style="width:140px;">Unit Price</th><th style="width:120px;">Line Total</th></tr></thead>
+      <tbody>
+      {% for line in order.items %}
+        <tr>
+          <td>{{ line.item.name }}</td>
+          <td>
+            <input type="hidden" name="purchase_order_item_id" value="{{ line.id }}">
+            <input type="number" name="quantity" class="form-control form-control-sm qty-input" min="0.0001" step="any"
+                   value="{{ submitted.lines[loop.index0].quantity if submitted.lines and loop.index0 < submitted.lines|length else (line.quantity|qty) }}"
+                   oninput="recalcRow(this)">
+          </td>
+          <td>
+            <input type="number" step="0.01" name="unit_price" class="form-control form-control-sm price-input"
+                   value="{{ submitted.lines[loop.index0].unit_price if submitted.lines and loop.index0 < submitted.lines|length else (line.unit_price|qty) }}"
+                   oninput="recalcRow(this)">
+          </td>
+          <td><span class="line-total">0.00</span></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <table class="table table-sm" id="lineTable">
+      <thead><tr><th style="width:280px;">Item</th><th style="width:100px;">Qty</th><th style="width:120px;">Unit Price</th><th style="width:110px;">Line Total</th><th>Serial Numbers</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <button type="button" class="btn btn-outline-secondary btn-sm mb-3" onclick="addRow()">+ Add Line</button>
+    {% endif %}
+
+    <div class="mb-3">
+      <label class="form-label">Notes</label>
+      <textarea name="notes" class="form-control" rows="2">{{ submitted.notes or '' }}</textarea>
+    </div>
+
+    <div class="fw-bold mb-3">Bill Total: <span id="billTotal">0.00</span></div>
+
+    <button type="submit" class="btn btn-dark">Save Bill</button>
+    <a href="{{ '/purchase/%d' % order.id if order else '/bills' }}" class="btn btn-link">Cancel</a>
+  </form>
+</div>
+
+<style>
+.item-search-wrap { position: relative; }
+.item-search-dropdown {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 1050;
+  max-height: 220px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #ced4da;
+  border-radius: 0.25rem;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+}
+.item-search-dropdown button.list-group-item {
+  cursor: pointer;
+  border: none;
+  border-bottom: 1px solid #f0f0f0;
+}
+.item-search-dropdown button.list-group-item:last-child { border-bottom: none; }
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.getElementById('billForm').addEventListener('keydown', function (e) {
+  if (e.key === 'Enter' && e.target.tagName !== 'TEXTAREA' && e.target.type !== 'submit') {
+    e.preventDefault();
+  }
+});
+
+function recalcTotal() {
+  let total = 0;
+  document.querySelectorAll('.line-total').forEach(el => total += parseFloat(el.dataset.value) || 0);
+  document.getElementById('billTotal').textContent = formatINR(total);
+}
+
+{% if order %}
+function recalcRow(el) {
+  const row = el.closest('tr');
+  const qty = parseFloat(row.querySelector('.qty-input').value) || 0;
+  const price = parseFloat(row.querySelector('.price-input').value) || 0;
+  const lineTotal = qty * price;
+  const lineTotalEl = row.querySelector('.line-total');
+  lineTotalEl.dataset.value = lineTotal;
+  lineTotalEl.textContent = formatINR(lineTotal);
+  recalcTotal();
+}
+document.querySelectorAll('#lineTable .qty-input').forEach(recalcRow);
+{% else %}
+const items = [
+  {% for i in items %}{ id: {{ i.id }}, name: {{ i.name|tojson }}, price: {{ i.purchase_price|float }}, stock: {{ i.current_stock|float }}, hasSerial: {{ i.has_serial|tojson }} },{% endfor %}
+];
+const submittedLines = [
+  {% for l in submitted.lines %}{ item_id: {{ l.item_id|tojson }}, quantity: {{ l.quantity|tojson }}, unit_price: {{ l.unit_price|tojson }}, serials: {{ l.serials|tojson }} },{% endfor %}
+];
+const rowErrors = {
+  {% for idx, msg in errors.items() %}{% if idx not in ('_general', 'vendor_id', 'vendor_bill_no') %}{{ idx }}: {{ msg|tojson }},{% endif %}{% endfor %}
+};
+
+let rowCount = 0;
+
+function addRow(selectedId, qty, price, serials) {
+  const myIndex = rowCount++;
+  const tbody = document.querySelector('#lineTable tbody');
+  const row = document.createElement('tr');
+  row.innerHTML = `
+    <td>
+      <div class="item-search-wrap">
+        <input type="text" class="form-control form-control-sm item-search-input" placeholder="Search item..." autocomplete="off">
+        <input type="hidden" name="item_id" class="item-id-input">
+        <div class="item-search-dropdown list-group"></div>
+      </div>
+    </td>
+    <td><input type="number" name="quantity" class="form-control form-control-sm qty-input" min="0.0001" step="any" value="${qty || 1}" oninput="recalcRow(this)"></td>
+    <td><input type="number" step="0.01" name="unit_price" class="form-control form-control-sm price-input" value="${price != null ? price : '0.00'}" oninput="recalcRow(this)"></td>
+    <td><span class="line-total">0.00</span></td>
+    <td class="serials-cell"><span class="text-muted small">-</span></td>
+    <td><button type="button" class="btn btn-sm btn-outline-danger" onclick="this.closest('tr').remove(); recalcTotal();">x</button></td>
+  `;
+  tbody.appendChild(row);
+  setupItemSearch(row, selectedId, myIndex, serials);
+  if (selectedId) recalcRow(row.querySelector('.qty-input'));
+}
+
+function setupItemSearch(row, selectedId, myIndex, serials) {
+  const input = row.querySelector('.item-search-input');
+  const hidden = row.querySelector('.item-id-input');
+  const dropdown = row.querySelector('.item-search-dropdown');
+
+  function renderDropdown(filterText) {
+    const q = filterText.trim().toLowerCase();
+    const matches = q ? items.filter(i => i.name.toLowerCase().includes(q)) : items;
+    dropdown.innerHTML = matches.length
+      ? matches.map(i => `<button type="button" class="list-group-item list-group-item-action py-1 px-2 small" data-id="${i.id}">${i.name} <span class="text-muted">(stock: ${i.stock})</span></button>`).join('')
+      : '<div class="px-2 py-1 small text-muted">No items match</div>';
+    dropdown.style.display = 'block';
+  }
+
+  function pick(item) {
+    hidden.value = item.id;
+    input.value = item.name;
+    dropdown.style.display = 'none';
+    updateSerialCell(row, item, myIndex, serials);
+    recalcRow(row.querySelector('.qty-input'));
+  }
+
+  input.addEventListener('focus', () => renderDropdown(input.value));
+  input.addEventListener('input', () => { hidden.value = ''; renderDropdown(input.value); });
+  input.addEventListener('blur', () => setTimeout(() => { dropdown.style.display = 'none'; }, 150));
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { dropdown.style.display = 'none'; }
+    else if (e.key === 'Enter') {
+      const first = dropdown.querySelector('button[data-id]');
+      if (first) { const item = items.find(i => i.id == first.dataset.id); if (item) pick(item); }
+    }
+  });
+  dropdown.addEventListener('mousedown', (e) => {
+    const btn = e.target.closest('button[data-id]');
+    if (!btn) return;
+    e.preventDefault();
+    const item = items.find(i => i.id == btn.dataset.id);
+    if (item) pick(item);
+  });
+
+  if (selectedId) {
+    const item = items.find(i => i.id == selectedId);
+    if (item) {
+      hidden.value = item.id;
+      input.value = item.name;
+      updateSerialCell(row, item, myIndex, serials);
+    }
+  }
+}
+
+function updateSerialCell(row, item, myIndex, serials) {
+  const cell = row.querySelector('.serials-cell');
+  if (item && item.hasSerial) {
+    const err = rowErrors[myIndex];
+    cell.innerHTML = '<textarea name="serials_' + myIndex + '" class="form-control form-control-sm ' + (err ? 'is-invalid' : '') + '" rows="2" placeholder="One serial per line or comma-separated">' + (serials || '') + '</textarea>' + (err ? '<div class="invalid-feedback d-block">' + err + '</div>' : '');
+  } else {
+    cell.innerHTML = '<span class="text-muted small">-</span>';
+  }
+}
+
+function recalcRow(el) {
+  const row = el.closest('tr');
+  const qty = parseFloat(row.querySelector('.qty-input').value) || 0;
+  const price = parseFloat(row.querySelector('.price-input').value) || 0;
+  const lineTotal = qty * price;
+  const lineTotalEl = row.querySelector('.line-total');
+  lineTotalEl.dataset.value = lineTotal;
+  lineTotalEl.textContent = formatINR(lineTotal);
+  recalcTotal();
+}
+
+if (submittedLines.length) {
+  submittedLines.forEach(l => addRow(l.item_id, l.quantity, l.unit_price, l.serials));
+} else {
+  addRow();
+}
+recalcTotal();
+{% endif %}
+</script>
+{% endblock %}

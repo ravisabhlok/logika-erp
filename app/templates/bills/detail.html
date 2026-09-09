@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+{% block title %}{{ bill.bill_ref }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">{{ bill.bill_ref }}</h4>
+  <div>
+    {% if bill.attachment_stored_filename %}
+    <a href="/static/uploads/{{ bill.attachment_stored_filename }}" target="_blank" class="btn btn-outline-secondary btn-sm">View Attached Bill</a>
+    {% endif %}
+    {% if bill.status != 'cancelled' and perms.edit %}
+    <form method="post" action="/bills/{{ bill.id }}/cancel" class="d-inline" onsubmit="return confirm('Cancel {{ bill.bill_ref }}?{{ ' This will reverse the stock and serials it added.' if bill.stock_updated else '' }}');">
+      <button class="btn btn-outline-danger btn-sm">Cancel Bill</button>
+    </form>
+    {% endif %}
+    <span class="badge bg-{{ {'unpaid':'secondary','partially_paid':'warning text-dark','paid':'success','cancelled':'danger'}[bill.status] }} fs-6">{{ bill.status.replace('_', ' ') }}</span>
+  </div>
+</div>
+
+<div class="row mb-3">
+  <div class="col-md-4">
+    <div class="card p-3">
+      <div class="text-muted small">Vendor</div>
+      <div>{{ bill.vendor.name }}</div>
+      <div class="text-muted small mt-2">Against</div>
+      <div>
+        {% if bill.purchase_order %}
+          <a href="/purchase/{{ bill.purchase_order.id }}">{{ bill.purchase_order.order_no }}</a>
+        {% else %}
+          <span class="badge bg-info text-dark">Direct purchase — no PO</span>
+        {% endif %}
+      </div>
+      <div class="text-muted small mt-2">Vendor Bill No</div>
+      <div>{{ bill.vendor_bill_no }}</div>
+      <div class="text-muted small mt-2">Bill Date</div>
+      <div>{{ bill.bill_date.strftime('%d-%b-%Y') }}</div>
+      {% if bill.due_date %}
+      <div class="text-muted small mt-2">Due Date</div>
+      <div>{{ bill.due_date.strftime('%d-%b-%Y') }}</div>
+      {% endif %}
+      {% if bill.notes %}
+      <div class="text-muted small mt-2">Notes</div>
+      <div>{{ bill.notes }}</div>
+      {% endif %}
+    </div>
+  </div>
+  <div class="col-md-8">
+    <div class="card p-3">
+      <div class="row text-center">
+        <div class="col">
+          <div class="text-muted small">Taxable</div>
+          <div class="fs-5">{{ bill.taxable_amount|inr }}</div>
+        </div>
+        <div class="col">
+          <div class="text-muted small">GST</div>
+          <div class="fs-5">{{ bill.gst_amount|inr }}</div>
+        </div>
+        <div class="col">
+          <div class="text-muted small">Total</div>
+          <div class="fs-5 fw-bold">{{ bill.total_amount|inr }}</div>
+        </div>
+        <div class="col">
+          <div class="text-muted small">Paid</div>
+          <div class="fs-5 text-success">{{ bill.amount_paid|inr }}</div>
+        </div>
+        <div class="col">
+          <div class="text-muted small">Balance</div>
+          <div class="fs-5 {{ 'text-danger' if bill.status != 'cancelled' and (bill.total_amount - bill.amount_paid) > 0.005 else '' }}">
+            {{ (bill.total_amount - bill.amount_paid)|inr if bill.status != 'cancelled' else '-' }}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card p-3">
+  <table class="table table-sm mb-0">
+    <thead><tr><th>Item</th><th class="text-end">Qty</th><th class="text-end">Unit Price</th><th class="text-end">GST %</th><th class="text-end">Total</th><th>Serial Numbers</th></tr></thead>
+    <tbody>
+    {% for line in bill.items %}
+      <tr>
+        <td>{{ line.item.name }}</td>
+        <td class="text-end">{{ line.quantity|qty }}</td>
+        <td class="text-end">{{ line.unit_price|inr }}</td>
+        <td class="text-end">{{ line.gst_percentage|qty }}</td>
+        <td class="text-end">{{ line.total|inr }}</td>
+        <td>
+          {% if line.serials %}
+            <span class="small">{{ line.serials|map(attribute='serial_number')|join(', ') }}</span>
+          {% else %}
+            <span class="text-muted">-</span>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="card p-3 mt-3">
+  <div class="d-flex justify-content-between align-items-center mb-2">
+    <div class="text-muted small">Payments</div>
+  </div>
+  <table class="table table-sm mb-3">
+    <thead><tr><th>Date</th><th class="text-end">Amount</th><th>Mode</th><th>Reference</th><th>Notes</th><th></th></tr></thead>
+    <tbody>
+    {% for p in bill.payments %}
+      <tr>
+        <td>{{ p.payment_date|dt('%d-%b-%Y') }}</td>
+        <td class="text-end">{{ p.amount|inr }}</td>
+        <td>{{ p.mode or '-' }}</td>
+        <td>{{ p.reference_no or '-' }}</td>
+        <td>{{ p.notes or '-' }}</td>
+        <td>
+          {% if bill.status != 'cancelled' and perms.edit %}
+          <form method="post" action="/bills/{{ bill.id }}/payments/{{ p.id }}/delete" onsubmit="return confirm('Remove this payment of {{ p.amount }}?');">
+            <button class="btn btn-sm btn-outline-danger">Remove</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="6" class="text-muted text-center">No payments recorded yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+
+  {% if bill.status != 'cancelled' and (bill.total_amount - bill.amount_paid) > 0.005 and perms.edit %}
+  <form method="post" action="/bills/{{ bill.id }}/payments" class="row g-2 align-items-end">
+    <div class="col-auto">
+      <label class="form-label small mb-0">Date</label>
+      <input type="date" name="payment_date" class="form-control form-control-sm" value="{{ today }}">
+    </div>
+    <div class="col-auto">
+      <label class="form-label small mb-0">Amount</label>
+      <input type="number" name="amount" step="0.01" min="0.01" max="{{ '%.2f' % (bill.total_amount - bill.amount_paid) }}" class="form-control form-control-sm" required>
+    </div>
+    <div class="col-auto">
+      <label class="form-label small mb-0">Mode</label>
+      <select name="mode" class="form-select form-select-sm">
+        <option value="Bank Transfer">Bank Transfer</option>
+        <option value="Cheque">Cheque</option>
+        <option value="Cash">Cash</option>
+        <option value="Other">Other</option>
+      </select>
+    </div>
+    <div class="col-auto">
+      <label class="form-label small mb-0">Reference No.</label>
+      <input type="text" name="reference_no" class="form-control form-control-sm" placeholder="UTR / cheque no.">
+    </div>
+    <div class="col-auto">
+      <label class="form-label small mb-0">Notes</label>
+      <input type="text" name="notes" class="form-control form-control-sm">
+    </div>
+    <div class="col-auto">
+      <button type="submit" class="btn btn-success btn-sm">Record Payment</button>
+    </div>
+  </form>
+  {% endif %}
+</div>
+{% endblock %}

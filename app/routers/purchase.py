@@ -24,6 +24,7 @@ from app.models import (
 )
 from app.requirements import compute_demand_map, on_order_qty, last_vendor
 from app.audit import diff_fields, log_field_changes, log_action
+from app.routers.bills import record_po_bill
 
 router = APIRouter(prefix="/purchase", tags=["purchase"])
 templates = Jinja2Templates(directory="app/templates")
@@ -45,6 +46,18 @@ def _nl2br(value):
 
 
 templates.env.filters["nl2br"] = _nl2br
+
+
+def _parse_date(value: str):
+    """Same shape as sales.py/invoices.py/bills.py's own _parse_date — HTML
+    <input type=date> gives 'YYYY-MM-DD' or ''. Originally named
+    _parse_bill_date (only used for Bill/due dates in the receive-and-bill
+    flow below); renamed when PurchaseOrderItem.expected_delivery_date
+    started using it too, since it was never bill-specific."""
+    value = (value or "").strip()
+    if not value:
+        return None
+    return datetime.strptime(value, "%Y-%m-%d")
 
 
 def next_order_no(db: Session) -> str:
@@ -204,6 +217,7 @@ async def create_purchase_order(request: Request, db: Session = Depends(get_db),
     item_ids = form.getlist("item_id")
     quantities = form.getlist("quantity")
     prices = form.getlist("unit_price")
+    delivery_dates = form.getlist("delivery_date")
     currency = (form.get("currency") or "INR").strip().upper()[:3] or "INR"
     try:
         exchange_rate = float(form.get("exchange_rate") or 1)
@@ -224,7 +238,12 @@ async def create_purchase_order(request: Request, db: Session = Depends(get_db),
     db.add(order)
 
     total = 0
-    for item_id_str, qty_str, price_str in zip(item_ids, quantities, prices):
+    # zip's shortest-iterable behavior is fine here even though
+    # delivery_date is a newer field than item_id/quantity/unit_price:
+    # form.html always submits all four inputs for every line row (a blank
+    # date input still posts an empty string), so the lists are always the
+    # same length in practice.
+    for item_id_str, qty_str, price_str, delivery_date_str in zip(item_ids, quantities, prices, delivery_dates):
         if not item_id_str or not qty_str:
             continue
         qty = float(qty_str)
@@ -236,6 +255,7 @@ async def create_purchase_order(request: Request, db: Session = Depends(get_db),
         total += line_total
         order.items.append(PurchaseOrderItem(
             item_id=item.id, quantity=qty, unit_price=price, total=line_total,
+            expected_delivery_date=_parse_date(delivery_date_str),
         ))
 
     order.total_amount = total
@@ -365,7 +385,10 @@ def edit_purchase_form(order_id: int, request: Request, db: Session = Depends(ge
         "currency": order.currency,
         "exchange_rate": float(order.exchange_rate),
         "lines": [
-            {"item_id": line.item_id, "quantity": float(line.quantity), "unit_price": float(line.unit_price)}
+            {
+                "item_id": line.item_id, "quantity": float(line.quantity), "unit_price": float(line.unit_price),
+                "delivery_date": line.expected_delivery_date.strftime("%Y-%m-%d") if line.expected_delivery_date else "",
+            }
             for line in order.items
         ],
     }
@@ -396,6 +419,7 @@ async def update_purchase_order(order_id: int, request: Request, db: Session = D
     item_ids = form.getlist("item_id")
     quantities = form.getlist("quantity")
     prices = form.getlist("unit_price")
+    delivery_dates = form.getlist("delivery_date")
     currency = (form.get("currency") or "INR").strip().upper()[:3] or "INR"
     try:
         exchange_rate = float(form.get("exchange_rate") or 1)
@@ -420,7 +444,7 @@ async def update_purchase_order(order_id: int, request: Request, db: Session = D
     order.items = []  # cascade="all, delete-orphan" removes the old lines on flush
 
     total = 0
-    for item_id_str, qty_str, price_str in zip(item_ids, quantities, prices):
+    for item_id_str, qty_str, price_str, delivery_date_str in zip(item_ids, quantities, prices, delivery_dates):
         if not item_id_str or not qty_str:
             continue
         qty = float(qty_str)
@@ -432,6 +456,7 @@ async def update_purchase_order(order_id: int, request: Request, db: Session = D
         total += line_total
         order.items.append(PurchaseOrderItem(
             item_id=item.id, quantity=qty, unit_price=price, total=line_total,
+            expected_delivery_date=_parse_date(delivery_date_str),
         ))
 
     order.total_amount = total
@@ -650,7 +675,10 @@ def receive_form(order_id: int, request: Request, db: Session = Depends(get_db),
         )
     return templates.TemplateResponse(
         "purchase/receive.html",
-        {"request": request, "user": user, "order": order, "errors": {}, "submitted": {}},
+        {
+            "request": request, "user": user, "order": order, "errors": {}, "submitted": {},
+            "today": datetime.utcnow().strftime("%Y-%m-%d"),
+        },
     )
 
 
@@ -688,7 +716,10 @@ async def receive_purchase_order(order_id: int, request: Request, db: Session = 
     if errors:
         return templates.TemplateResponse(
             "purchase/receive.html",
-            {"request": request, "user": user, "order": order, "errors": errors, "submitted": submitted},
+            {
+                "request": request, "user": user, "order": order, "errors": errors, "submitted": submitted,
+                "today": datetime.utcnow().strftime("%Y-%m-%d"),
+            },
             status_code=400,
         )
 
@@ -706,7 +737,10 @@ async def receive_purchase_order(order_id: int, request: Request, db: Session = 
     if errors:
         return templates.TemplateResponse(
             "purchase/receive.html",
-            {"request": request, "user": user, "order": order, "errors": errors, "submitted": submitted},
+            {
+                "request": request, "user": user, "order": order, "errors": errors, "submitted": submitted,
+                "today": datetime.utcnow().strftime("%Y-%m-%d"),
+            },
             status_code=400,
         )
 
@@ -726,12 +760,40 @@ async def receive_purchase_order(order_id: int, request: Request, db: Session = 
             ))
 
     order.status = "received"
+
+    # Optional "enter the bill while you're here" section on the same
+    # screen — see receive.html. Vendor bill no left blank means the vendor's
+    # invoice hasn't arrived yet (goods often arrive before the bill does);
+    # skip bill creation entirely and it stays available via Purchase's own
+    # "Record Bill" button, or the standalone /bills/new?po_id=, afterward.
+    bill = None
+    vendor_bill_no = (form.get("vendor_bill_no") or "").strip()
+    if vendor_bill_no:
+        bill_date = _parse_date(form.get("bill_date", "")) or datetime.utcnow()
+        due_date = _parse_date(form.get("due_date", ""))
+        bill_notes = form.get("bill_notes", "")
+        upload = form.get("bill_attachment")
+        attachment_filename = None
+        attachment_bytes = None
+        if upload is not None and getattr(upload, "filename", ""):
+            attachment_filename = upload.filename
+            attachment_bytes = await upload.read()
+        bill = record_po_bill(
+            db, order, user, vendor_bill_no, bill_date, due_date, bill_notes,
+            attachment_filename=attachment_filename, attachment_bytes=attachment_bytes,
+        )
+        db.flush()  # need bill.id for the log entry below
+
     log_action(
         db, user, "purchase_order", order.id, order.order_no, "receive",
-        summary=f"Received — {len(order.items)} line(s), stock and serials updated",
+        summary=f"Received — {len(order.items)} line(s), stock and serials updated"
+        + (f" — bill {bill.bill_ref} recorded" if bill else ""),
     )
+    if bill:
+        log_action(db, user, "bill", bill.id, bill.bill_ref, "create", summary=f"Recorded at receipt of {order.order_no} — total {bill.total_amount}")
     db.commit()
-    return RedirectResponse(url=f"/purchase/{order_id}?success=Order received and stock updated", status_code=303)
+    success_msg = "Order received and stock updated" + (f" — bill {bill.bill_ref} recorded" if bill else "")
+    return RedirectResponse(url=f"/purchase/{order_id}?success={success_msg}", status_code=303)
 
 
 def get_purchase_order_delete_blockers(order: PurchaseOrder) -> list[str]:

@@ -171,6 +171,68 @@ html.sidebar-collapsed .sidebar-toggle i {
     color: #fca5a5;
 }
 
+/* A visually-nested link under a parent section (e.g. Bills / What to
+   Order under Purchase) — same .nav-item behavior, just smaller and
+   indented so the grouping reads at a glance without a real collapsible
+   submenu component. */
+.nav-subitem {
+    padding-left: 2.35rem;
+    font-size: 0.82rem;
+    font-weight: 400;
+    opacity: 0.88;
+}
+
+html.sidebar-collapsed .nav-subitem {
+    padding-left: 0.75rem;
+    font-size: inherit;
+    font-weight: 500;
+    opacity: 1;
+}
+
+/* A sidebar section that expands/collapses in place (currently just
+   Purchase -> Purchase Orders / Bills / What to Order). The header is a
+   <button class="nav-item nav-group-toggle">, styled identically to a
+   plain nav-item link but reset of its native button chrome; its children
+   live in a following .nav-group-items that animates open via max-height
+   rather than display, so the transition has something to animate. */
+.nav-group-toggle {
+    width: 100%;
+    background: none;
+    border: none;
+    text-align: left;
+    font: inherit;
+    cursor: pointer;
+}
+
+.nav-group-caret {
+    margin-left: auto;
+    font-size: 0.75rem !important;
+    width: auto !important;
+    transition: transform 0.15s ease;
+}
+
+.nav-group.open .nav-group-caret {
+    transform: rotate(180deg);
+}
+
+.nav-group-items {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.2s ease;
+}
+
+.nav-group.open .nav-group-items {
+    max-height: 240px;
+}
+
+html.sidebar-collapsed .nav-group-caret {
+    display: none;
+}
+
+html.sidebar-collapsed .nav-group-items {
+    max-height: 0 !important;
+}
+
 html.sidebar-collapsed .nav-item span {
     display: none;
 }

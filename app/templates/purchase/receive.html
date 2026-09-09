@@ -5,7 +5,7 @@
 <p class="text-muted">Vendor: {{ order.vendor.name }}. Confirming receipt will add the quantities below to stock.</p>
 
 <div class="card p-4">
-  <form method="post" action="/purchase/{{ order.id }}/receive">
+  <form method="post" action="/purchase/{{ order.id }}/receive" enctype="multipart/form-data">
     <table class="table table-sm align-middle">
       <thead><tr><th>Item</th><th class="text-end" style="width:100px;">Qty</th><th>Serial Numbers</th></tr></thead>
       <tbody>
@@ -31,6 +31,39 @@
       {% endfor %}
       </tbody>
     </table>
+
+    <div class="card bg-light border-0 p-3 mt-3 mb-3">
+      <div class="form-check mb-2">
+        <input type="checkbox" class="form-check-input" id="addBillCheck" onchange="document.getElementById('billFields').style.display = this.checked ? '' : 'none';">
+        <label class="form-check-label" for="addBillCheck">I have the vendor's bill in hand — record it now</label>
+      </div>
+      <div id="billFields" style="display:none;">
+        <div class="text-muted small mb-2">Optional — if the vendor's invoice hasn't arrived yet, skip this and record the bill later from this order's page.</div>
+        <div class="row">
+          <div class="col-md-4 mb-2">
+            <label class="form-label small mb-0">Vendor Bill No</label>
+            <input type="text" name="vendor_bill_no" class="form-control form-control-sm">
+          </div>
+          <div class="col-md-3 mb-2">
+            <label class="form-label small mb-0">Bill Date</label>
+            <input type="date" name="bill_date" class="form-control form-control-sm" value="{{ today }}">
+          </div>
+          <div class="col-md-3 mb-2">
+            <label class="form-label small mb-0">Due Date</label>
+            <input type="date" name="due_date" class="form-control form-control-sm">
+          </div>
+          <div class="col-md-2 mb-2">
+            <label class="form-label small mb-0">Attach Bill</label>
+            <input type="file" name="bill_attachment" class="form-control form-control-sm" accept=".jpg,.jpeg,.png,.gif,.webp,.pdf">
+          </div>
+        </div>
+        <div class="mb-1">
+          <label class="form-label small mb-0">Notes</label>
+          <input type="text" name="bill_notes" class="form-control form-control-sm">
+        </div>
+        <div class="text-muted small mt-1">Bill amount/GST will be taken from this order's own line items — use "Record Bill" on the order's page afterward if the vendor's invoice differs.</div>
+      </div>
+    </div>
 
     <button type="submit" class="btn btn-success">Confirm Receipt (adds stock)</button>
     <a href="/purchase/{{ order.id }}" class="btn btn-link">Cancel</a>

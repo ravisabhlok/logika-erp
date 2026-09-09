@@ -1,9 +1,20 @@
 {% extends "base.html" %}
 {% block title %}Purchase Orders{% endblock %}
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
   <h4 class="mb-0">Purchase Orders</h4>
-  <div>
+  <div class="d-flex align-items-center gap-2 flex-wrap">
+    <input type="text" id="vendorBox" class="form-control form-control-sm" style="width:200px;"
+           placeholder="Search vendor..." oninput="filterRows()">
+    <select id="statusBox" class="form-select form-select-sm" style="width:170px;" onchange="filterRows()">
+      <option value="">All statuses</option>
+      <option value="draft">Draft</option>
+      <option value="pending_approval">Pending Approval</option>
+      <option value="pending_confirmation">Pending Confirmation</option>
+      <option value="ordered">Ordered</option>
+      <option value="received">Received</option>
+      <option value="cancelled">Cancelled</option>
+    </select>
     <a href="/purchase/requirements" class="btn btn-outline-primary btn-sm">What to Order</a>
     {% if perms.add %}
     <a href="/purchase/new" class="btn btn-dark btn-sm">+ New Purchase Order</a>
@@ -11,11 +22,12 @@
   </div>
 </div>
 <div class="card p-3">
-  <table class="table table-hover align-middle mb-0">
+  <table class="table table-hover align-middle mb-0" id="purchaseTable">
     <thead><tr><th>Order#</th><th>Vendor</th><th>Date</th><th>Status</th><th class="text-end">Total</th></tr></thead>
     <tbody>
     {% for o in orders %}
-      <tr onclick="window.location='/purchase/{{ o.id }}'" style="cursor:pointer;">
+      <tr onclick="window.location='/purchase/{{ o.id }}'" style="cursor:pointer;"
+          data-vendor="{{ o.vendor.name|lower }}" data-status="{{ o.status }}">
         <td>{{ o.order_no }}</td>
         <td>{{ o.vendor.name }}</td>
         <td>{{ o.order_date|dt('%d-%b-%Y') }}</td>
@@ -27,5 +39,25 @@
     {% endfor %}
     </tbody>
   </table>
+  <p class="text-muted text-center mt-2 mb-0" id="noPurchaseResults" style="display:none;">No purchase orders match your filters.</p>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  function filterRows() {
+    const vendor = document.getElementById('vendorBox').value.trim().toLowerCase();
+    const status = document.getElementById('statusBox').value;
+    const rows = document.querySelectorAll('#purchaseTable tbody tr[data-vendor]');
+    let visibleCount = 0;
+    rows.forEach(row => {
+      const vendorMatch = !vendor || row.dataset.vendor.includes(vendor);
+      const statusMatch = !status || row.dataset.status === status;
+      const match = vendorMatch && statusMatch;
+      row.style.display = match ? '' : 'none';
+      if (match) visibleCount++;
+    });
+    document.getElementById('noPurchaseResults').style.display = (rows.length && visibleCount === 0) ? 'block' : 'none';
+  }
+</script>
 {% endblock %}

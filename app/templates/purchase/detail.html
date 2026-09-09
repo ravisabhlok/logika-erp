@@ -116,7 +116,7 @@
 
 <div class="card p-3">
   <table class="table table-sm mb-0">
-    <thead><tr><th>Item</th><th class="text-end">Qty</th><th class="text-end">Unit Price</th><th class="text-end">Total</th><th>Serial Numbers</th></tr></thead>
+    <thead><tr><th>Item</th><th class="text-end">Qty</th><th class="text-end">Unit Price</th><th class="text-end">Total</th><th>Delivery Date</th><th>Serial Numbers</th></tr></thead>
     <tbody>
     {% for line in order.items %}
       <tr>
@@ -124,6 +124,7 @@
         <td class="text-end">{{ line.quantity|qty }}</td>
         <td class="text-end">{{ line.unit_price|money(order.currency) }}</td>
         <td class="text-end">{{ line.total|money(order.currency) }}</td>
+        <td>{% if line.expected_delivery_date %}{{ line.expected_delivery_date.strftime('%d-%b-%Y') }}{% else %}<span class="text-muted">-</span>{% endif %}</td>
         <td>
           {% if line.item.has_serial %}
             {% if line.serials %}
@@ -141,9 +142,38 @@
     {% endfor %}
     </tbody>
     <tfoot>
-      <tr><th colspan="3" class="text-end">Order Total</th><th class="text-end">{{ order.total_amount|money(order.currency) }}</th><th></th></tr>
+      <tr><th colspan="3" class="text-end">Order Total</th><th class="text-end">{{ order.total_amount|money(order.currency) }}</th><th></th><th></th></tr>
     </tfoot>
   </table>
+</div>
+
+<div class="card p-3 mt-3">
+  <div class="d-flex justify-content-between align-items-center mb-2">
+    <div class="text-muted small">Bills</div>
+    {% if order.status == 'received' and perms.add %}
+    <a href="/bills/new?po_id={{ order.id }}" class="btn btn-outline-dark btn-sm">+ Record Bill</a>
+    {% endif %}
+  </div>
+  {% if order.bills %}
+  <table class="table table-sm mb-0">
+    <thead><tr><th>Bill Ref</th><th>Vendor Bill No</th><th>Bill Date</th><th>Status</th><th class="text-end">Total</th></tr></thead>
+    <tbody>
+    {% for b in order.bills %}
+      <tr onclick="window.location='/bills/{{ b.id }}'" style="cursor:pointer;">
+        <td>{{ b.bill_ref }}</td>
+        <td>{{ b.vendor_bill_no }}</td>
+        <td>{{ b.bill_date.strftime('%d-%b-%Y') }}</td>
+        <td><span class="badge bg-{{ {'unpaid':'secondary','partially_paid':'warning text-dark','paid':'success','cancelled':'danger'}[b.status] }}">{{ b.status.replace('_', ' ') }}</span></td>
+        <td class="text-end">{{ b.total_amount|inr }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="text-muted small">
+    {% if order.status == 'received' %}No bill recorded against this order yet.{% else %}A bill can be recorded once this order is received.{% endif %}
+  </div>
+  {% endif %}
 </div>
 
 {% if order.notes %}

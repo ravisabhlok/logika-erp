@@ -131,11 +131,12 @@ DOWNLOADABLE_PURCHASE_STATUSES in app/routers/purchase.py).
   <thead>
     <tr>
       <th style="width: 5%;">#</th>
-      <th style="width: 37%;">Item &amp; Description</th>
-      <th style="width: 12%;">HSN/SAC</th>
-      <th style="width: 12%;" class="text-end">Qty</th>
-      <th style="width: 15%;" class="text-end">Rate</th>
-      <th style="width: 19%;" class="text-end">Amount</th>
+      <th style="width: 28%;">Item &amp; Description</th>
+      <th style="width: 10%;">HSN/SAC</th>
+      <th style="width: 10%;" class="text-end">Qty</th>
+      <th style="width: 13%;" class="text-end">Rate</th>
+      <th style="width: 17%;" class="text-end">Amount</th>
+      <th style="width: 17%;">Delivery</th>
     </tr>
   </thead>
   <tbody>
@@ -147,6 +148,7 @@ DOWNLOADABLE_PURCHASE_STATUSES in app/routers/purchase.py).
       <td class="text-end">{{ line.quantity|qty }}</td>
       <td class="text-end">{{ line.unit_price|money(order.currency) }}</td>
       <td class="text-end">{{ line.total|money(order.currency) }}</td>
+      <td>{{ line.expected_delivery_date.strftime('%d-%b-%Y') if line.expected_delivery_date else "-" }}</td>
     </tr>
   {% endfor %}
   </tbody>
