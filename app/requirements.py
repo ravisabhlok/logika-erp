@@ -88,6 +88,21 @@ def on_order_qty(db: Session, item_id: int) -> float:
     return float(total or 0)
 
 
+def on_order_map(db: Session) -> dict:
+    """{item_id: qty} for every item with quantity on order — same definition
+    as on_order_qty() (PurchaseOrder status 'ordered', not yet received), but
+    one grouped query for all items at once, for list pages like Inventory
+    that would otherwise run one query per row."""
+    rows = (
+        db.query(PurchaseOrderItem.item_id, func.sum(PurchaseOrderItem.quantity))
+        .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderItem.purchase_order_id)
+        .filter(PurchaseOrder.status == "ordered")
+        .group_by(PurchaseOrderItem.item_id)
+        .all()
+    )
+    return {item_id: float(qty or 0) for item_id, qty in rows}
+
+
 def last_vendor(db: Session, item_id: int):
     """Vendor from the most recent purchase order (any status) that included
     this item — a purchasing hint, not a commitment."""

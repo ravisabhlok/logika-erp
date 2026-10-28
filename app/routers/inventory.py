@@ -10,6 +10,7 @@ from app.auth import require_module_permission, get_user_module_permissions
 from app.formatting import format_qty, format_dt
 from app.models import Item, StockTransaction, ItemSerial, User
 from app.audit import log_action
+from app.requirements import on_order_map
 
 router = APIRouter(prefix="/inventory", tags=["inventory"])
 templates = Jinja2Templates(directory="app/templates")
@@ -29,7 +30,12 @@ def _split_serials(raw: str) -> list[str]:
 def list_inventory(request: Request, db: Session = Depends(get_db), user: User = Depends(require_module_permission("inventory", "view"))):
     items = db.query(Item).order_by(Item.name).all()
     perms = get_user_module_permissions(user, db, "inventory")
-    return templates.TemplateResponse("inventory/list.html", {"request": request, "user": user, "items": items, "perms": perms})
+    # Qty placed with vendors (PO status 'ordered') but not yet received.
+    on_order = on_order_map(db)
+    return templates.TemplateResponse(
+        "inventory/list.html",
+        {"request": request, "user": user, "items": items, "perms": perms, "on_order": on_order},
+    )
 
 
 @router.get("/adjust")
