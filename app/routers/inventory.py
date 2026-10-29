@@ -30,7 +30,7 @@ def _split_serials(raw: str) -> list[str]:
 def list_inventory(request: Request, db: Session = Depends(get_db), user: User = Depends(require_module_permission("inventory", "view"))):
     items = db.query(Item).order_by(Item.name).all()
     perms = get_user_module_permissions(user, db, "inventory")
-    # Qty placed with vendors (PO status 'ordered') but not yet received.
+    # Qty placed with vendors (open POs) but not yet received — pending balance only.
     on_order = on_order_map(db)
     return templates.TemplateResponse(
         "inventory/list.html",

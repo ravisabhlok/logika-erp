@@ -577,9 +577,21 @@ class PurchaseOrder(Base):
     # 'ordered' or later, so nothing goes out to a vendor until both sign-offs
     # are in.
     status = Column(
-        Enum("draft", "pending_approval", "pending_confirmation", "ordered", "received", "cancelled", name="purchase_status"),
+        Enum("draft", "pending_approval", "pending_confirmation", "ordered", "partially_received", "received", "cancelled", name="purchase_status"),
         default="draft", nullable=False,
     )
+    # Partial receipts: vendors often ship part of a PO now and the rest
+    # later. 'ordered' -> 'partially_received' once some but not all of the
+    # ordered qty has come in (PurchaseOrderItem.received_quantity tracks it
+    # per line), and the PO can be received again any number of times until
+    # every line is complete -> 'received'. If the vendor won't supply the
+    # balance, Short Close (purchase.py:short_close_purchase_order) moves a
+    # 'partially_received' order straight to 'received' and records who/when/
+    # why below — the un-received balance then simply stops counting as "on
+    # order". All three stay null for an order that was received in full.
+    short_closed_at = Column(DateTime, nullable=True)
+    short_closed_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    short_close_reason = Column(Text, nullable=True)
     # 3-letter ISO code (INR, USD, ...) the vendor invoices this order in,
     # plus the INR-per-unit rate at order time — total_amount and every
     # PurchaseOrderItem.unit_price on this order are in `currency`, not
@@ -612,6 +624,7 @@ class PurchaseOrder(Base):
     bills = relationship("Bill", back_populates="purchase_order")
     approved_by_user = relationship("User", foreign_keys=[approved_by])
     confirmed_by_user = relationship("User", foreign_keys=[confirmed_by])
+    short_closed_by_user = relationship("User", foreign_keys=[short_closed_by])
 
 
 class PurchaseOrderItem(Base):
@@ -633,6 +646,15 @@ class PurchaseOrderItem(Base):
     # displays with a plain .strftime() in templates, never the IST-shifting
     # `dt` filter (see format_dt's docstring for why).
     expected_delivery_date = Column(DateTime, nullable=True)
+    # Running total of what has physically arrived against this line across
+    # every receipt so far (see purchase.py:receive_purchase_order). Pending
+    # = quantity - received_quantity. Never exceeds quantity — over-receipt
+    # is rejected; edit the PO first if the vendor sends extra.
+    received_quantity = Column(Numeric(14, 4), nullable=False, default=0, server_default="0")
+
+    @property
+    def pending_quantity(self):
+        return max(float(self.quantity or 0) - float(self.received_quantity or 0), 0.0)
 
     purchase_order = relationship("PurchaseOrder", back_populates="items")
     item = relationship("Item")

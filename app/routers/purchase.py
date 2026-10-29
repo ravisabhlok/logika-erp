@@ -1,6 +1,7 @@
 import io
 import re
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from urllib.parse import quote
 
@@ -275,15 +276,34 @@ def view_purchase_order(order_id: int, request: Request, db: Session = Depends(g
         .options(joinedload(PurchaseOrder.vendor), joinedload(PurchaseOrder.items).joinedload(PurchaseOrderItem.item))
         .get(order_id)
     )
+    if not order:
+        return RedirectResponse(url="/purchase?error=Purchase order not found", status_code=303)
     perms = get_user_module_permissions(user, db, "purchase")
-    return templates.TemplateResponse("purchase/detail.html", {"request": request, "user": user, "order": order, "perms": perms})
+    # Receipt history — one row per item per shipment, straight off the
+    # stock ledger (the IN rows receive_purchase_order writes), so partial
+    # deliveries show when each part actually arrived.
+    receipts = (
+        db.query(StockTransaction)
+        .options(joinedload(StockTransaction.item))
+        .filter(
+            StockTransaction.reference_type == "purchase_order",
+            StockTransaction.reference_id == order.id,
+            StockTransaction.transaction_type == "IN",
+        )
+        .order_by(StockTransaction.transaction_date, StockTransaction.id)
+        .all()
+    )
+    return templates.TemplateResponse(
+        "purchase/detail.html",
+        {"request": request, "user": user, "order": order, "perms": perms, "receipts": receipts},
+    )
 
 
 # Purchase orders this document can be downloaded for. Gated on status, not
 # just permission, so the PDF can't be pulled (e.g. by hitting the URL
 # directly) before an admin has approved it AND a second person has
 # confirmed it — see approve_purchase_order and confirm_purchase_order.
-DOWNLOADABLE_PURCHASE_STATUSES = ("ordered", "received")
+DOWNLOADABLE_PURCHASE_STATUSES = ("ordered", "partially_received", "received")
 
 
 @router.get("/{order_id}/pdf")
@@ -311,7 +331,7 @@ def purchase_order_pdf(order_id: int, request: Request, db: Session = Depends(ge
     # purchase/list.html, just as hex since the PDF has no Bootstrap.
     status_color = {
         "draft": "#6c757d", "pending_approval": "#a06a00", "pending_confirmation": "#a06a00",
-        "ordered": "#0d6efd", "received": "#198754", "cancelled": "#dc3545",
+        "ordered": "#0d6efd", "partially_received": "#0dcaf0", "received": "#198754", "cancelled": "#dc3545",
     }.get(order.status, "#6c757d")
     logo_file = Path(__file__).resolve().parent.parent / "static" / "Logo.jpg"
     logo_path = str(logo_file) if logo_file.exists() else None
@@ -501,6 +521,14 @@ def update_purchase_status(
         )
 
     order = db.query(PurchaseOrder).get(order_id)
+    if order.status in ("partially_received", "received"):
+        # Stock has already been taken in against this order — cancelling
+        # would leave it on the ledger with no live order behind it. A
+        # partially received order is closed with Short Close instead.
+        return RedirectResponse(
+            url=f"/purchase/{order_id}?error={quote('Goods have already been received against this order — use Short Close instead of Cancel')}",
+            status_code=303,
+        )
     old_status = order.status
     order.status = new_status
     if new_status != old_status:
@@ -661,71 +689,111 @@ def _split_serials(raw: str) -> list[str]:
     return [p.strip() for p in parts if p.strip()]
 
 
-@router.get("/{order_id}/receive")
-def receive_form(order_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(require_module_permission("purchase", "edit"))):
-    order = (
+# Statuses a PO can be received from: 'ordered' for the first shipment,
+# 'partially_received' for every later one until all lines are complete.
+RECEIVABLE_PURCHASE_STATUSES = ("ordered", "partially_received")
+
+
+def _load_order_for_receipt(db: Session, order_id: int):
+    return (
         db.query(PurchaseOrder)
         .options(joinedload(PurchaseOrder.vendor), joinedload(PurchaseOrder.items).joinedload(PurchaseOrderItem.item))
         .get(order_id)
     )
-    if order.status != "ordered":
-        return RedirectResponse(
-            url=f"/purchase/{order_id}?error=Only orders in 'ordered' status can be received",
-            status_code=303,
-        )
+
+
+def _render_receive(request, user, order, errors, submitted, status_code=200):
     return templates.TemplateResponse(
         "purchase/receive.html",
         {
-            "request": request, "user": user, "order": order, "errors": {}, "submitted": {},
+            "request": request, "user": user, "order": order, "errors": errors, "submitted": submitted,
             "today": datetime.utcnow().strftime("%Y-%m-%d"),
         },
+        status_code=status_code,
     )
+
+
+@router.get("/{order_id}/receive")
+def receive_form(order_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(require_module_permission("purchase", "edit"))):
+    order = _load_order_for_receipt(db, order_id)
+    if not order:
+        return RedirectResponse(url="/purchase?error=Purchase order not found", status_code=303)
+    if order.status not in RECEIVABLE_PURCHASE_STATUSES:
+        return RedirectResponse(
+            url=f"/purchase/{order_id}?error=Only orders in 'ordered' or 'partially received' status can be received",
+            status_code=303,
+        )
+    return _render_receive(request, user, order, {}, {})
 
 
 @router.post("/{order_id}/receive")
 async def receive_purchase_order(order_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(require_module_permission("purchase", "edit"))):
-    order = (
-        db.query(PurchaseOrder)
-        .options(joinedload(PurchaseOrder.vendor), joinedload(PurchaseOrder.items).joinedload(PurchaseOrderItem.item))
-        .get(order_id)
-    )
-    if order.status != "ordered":
+    """Goods receipt — full or partial. Each line takes a "Receive Now" qty
+    (defaults to that line's pending qty; 0 = nothing arrived for this line
+    in this shipment). Can be called repeatedly: each call adds to
+    PurchaseOrderItem.received_quantity, and the order becomes
+    'partially_received' until every line is complete, then 'received'.
+    Same validate-everything-then-write-everything shape as before: nothing
+    is written unless every line's qty and serials are valid."""
+    order = _load_order_for_receipt(db, order_id)
+    if not order:
+        return RedirectResponse(url="/purchase?error=Purchase order not found", status_code=303)
+    if order.status not in RECEIVABLE_PURCHASE_STATUSES:
         return RedirectResponse(
-            url=f"/purchase/{order_id}?error=Only orders in 'ordered' status can be received",
+            url=f"/purchase/{order_id}?error=Only orders in 'ordered' or 'partially received' status can be received",
             status_code=303,
         )
 
     form = await request.form()
 
-    # Validate serial counts for every serialized line before writing anything.
     errors = {}
-    submitted = {}
+    submitted = {"qty": {}, "serials": {}}
+    receive_qty = {}       # line.id -> Decimal qty received in this shipment
     serials_by_line = {}
     for line in order.items:
-        field_name = f"serials_{line.id}"
-        raw = form.get(field_name, "")
-        submitted[line.id] = raw
+        pending = Decimal(str(line.quantity or 0)) - Decimal(str(line.received_quantity or 0))
+        if pending <= 0:
+            continue
+        raw_qty = (form.get(f"receive_qty_{line.id}") or "").strip()
+        raw_serials = form.get(f"serials_{line.id}", "")
+        submitted["qty"][line.id] = raw_qty
+        submitted["serials"][line.id] = raw_serials
+        try:
+            qty = Decimal(raw_qty) if raw_qty else Decimal(0)
+        except InvalidOperation:
+            errors[line.id] = "Enter a valid quantity."
+            continue
+        if qty < 0:
+            errors[line.id] = "Quantity can't be negative."
+            continue
+        if qty > pending:
+            errors[line.id] = f"Only {format_qty(pending)} pending on this line — can't receive {format_qty(qty)}. Edit the PO first if the vendor sent extra."
+            continue
+        if qty == 0:
+            continue
         if line.item.has_serial:
-            serials = _split_serials(raw)
-            serials_by_line[line.id] = serials
-            if len(serials) != line.quantity:
-                errors[line.id] = f"Expected {line.quantity} serial number(s), got {len(serials)}."
-            elif len(set(serials)) != len(serials):
+            if qty != qty.to_integral_value():
+                errors[line.id] = "Serialized items must be received in whole units."
+                continue
+            serials = _split_serials(raw_serials)
+            if len(serials) != int(qty):
+                errors[line.id] = f"Expected {int(qty)} serial number(s), got {len(serials)}."
+                continue
+            if len(set(serials)) != len(serials):
                 errors[line.id] = "Duplicate serial numbers entered for this line."
+                continue
+            serials_by_line[line.id] = serials
+        receive_qty[line.id] = qty
+
+    if not errors and not receive_qty:
+        errors["_general"] = "Enter a quantity greater than 0 for at least one line."
 
     if errors:
-        return templates.TemplateResponse(
-            "purchase/receive.html",
-            {
-                "request": request, "user": user, "order": order, "errors": errors, "submitted": submitted,
-                "today": datetime.utcnow().strftime("%Y-%m-%d"),
-            },
-            status_code=400,
-        )
+        return _render_receive(request, user, order, errors, submitted, status_code=400)
 
-    # Also reject serials that already exist for that item (e.g. re-entered by mistake).
+    # Reject serials that already exist for that item (e.g. re-entered by mistake).
     for line in order.items:
-        if not line.item.has_serial:
+        if line.id not in serials_by_line:
             continue
         existing = {
             s for (s,) in db.query(ItemSerial.serial_number).filter(ItemSerial.item_id == line.item_id).all()
@@ -735,21 +803,18 @@ async def receive_purchase_order(order_id: int, request: Request, db: Session = 
             errors[line.id] = f"Already recorded for this item: {', '.join(sorted(clashes))}"
 
     if errors:
-        return templates.TemplateResponse(
-            "purchase/receive.html",
-            {
-                "request": request, "user": user, "order": order, "errors": errors, "submitted": submitted,
-                "today": datetime.utcnow().strftime("%Y-%m-%d"),
-            },
-            status_code=400,
-        )
+        return _render_receive(request, user, order, errors, submitted, status_code=400)
 
-    # Everything validated — now write stock, serials, and status together.
+    # Everything validated — now write stock, serials, received qty and status together.
     for line in order.items:
+        qty = receive_qty.get(line.id)
+        if not qty:
+            continue
         item = db.query(Item).get(line.item_id)
-        item.current_stock = (item.current_stock or 0) + line.quantity
+        item.current_stock = Decimal(str(item.current_stock or 0)) + qty
+        line.received_quantity = Decimal(str(line.received_quantity or 0)) + qty
         db.add(StockTransaction(
-            item_id=item.id, transaction_type="IN", quantity=line.quantity,
+            item_id=item.id, transaction_type="IN", quantity=qty,
             reference_type="purchase_order", reference_id=order.id,
             notes=f"Received against {order.order_no}",
         ))
@@ -759,13 +824,17 @@ async def receive_purchase_order(order_id: int, request: Request, db: Session = 
                 purchase_order_id=order.id, purchase_order_item_id=line.id,
             ))
 
-    order.status = "received"
+    fully_received = all(
+        Decimal(str(l.received_quantity or 0)) >= Decimal(str(l.quantity or 0)) for l in order.items
+    )
+    old_status = order.status
+    order.status = "received" if fully_received else "partially_received"
 
     # Optional "enter the bill while you're here" section on the same
-    # screen — see receive.html. Vendor bill no left blank means the vendor's
-    # invoice hasn't arrived yet (goods often arrive before the bill does);
-    # skip bill creation entirely and it stays available via Purchase's own
-    # "Record Bill" button, or the standalone /bills/new?po_id=, afterward.
+    # screen — see receive.html. The bill covers only what arrived in THIS
+    # shipment (vendors usually bill per dispatch). Vendor bill no left
+    # blank means the vendor's invoice hasn't arrived yet; it stays
+    # available via the order's "Record Bill" button afterward.
     bill = None
     vendor_bill_no = (form.get("vendor_bill_no") or "").strip()
     if vendor_bill_no:
@@ -781,19 +850,67 @@ async def receive_purchase_order(order_id: int, request: Request, db: Session = 
         bill = record_po_bill(
             db, order, user, vendor_bill_no, bill_date, due_date, bill_notes,
             attachment_filename=attachment_filename, attachment_bytes=attachment_bytes,
+            quantities=receive_qty,
         )
         db.flush()  # need bill.id for the log entry below
 
+    received_desc = ", ".join(
+        f"{l.item.name} x {format_qty(receive_qty[l.id])}" for l in order.items if l.id in receive_qty
+    )
     log_action(
         db, user, "purchase_order", order.id, order.order_no, "receive",
-        summary=f"Received — {len(order.items)} line(s), stock and serials updated"
+        summary=("Received in full" if fully_received else "Partially received")
+        + f" — {received_desc}"
+        + (f" ({old_status} -> {order.status})" if old_status != order.status else "")
         + (f" — bill {bill.bill_ref} recorded" if bill else ""),
     )
     if bill:
         log_action(db, user, "bill", bill.id, bill.bill_ref, "create", summary=f"Recorded at receipt of {order.order_no} — total {bill.total_amount}")
     db.commit()
-    success_msg = "Order received and stock updated" + (f" — bill {bill.bill_ref} recorded" if bill else "")
-    return RedirectResponse(url=f"/purchase/{order_id}?success={success_msg}", status_code=303)
+    if fully_received:
+        success_msg = "Order fully received and stock updated"
+    else:
+        success_msg = "Partial receipt recorded and stock updated — balance still pending"
+    if bill:
+        success_msg += f" — bill {bill.bill_ref} recorded"
+    return RedirectResponse(url=f"/purchase/{order_id}?success={quote(success_msg)}", status_code=303)
+
+
+@router.post("/{order_id}/short-close")
+def short_close_purchase_order(
+    order_id: int,
+    reason: str = Form(""),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_module_permission("purchase", "edit")),
+):
+    """Vendor won't supply the balance of a partially received PO: close it
+    as 'received' with whatever has arrived. Nothing about stock changes —
+    the un-received balance just stops counting as on-order (see
+    app/requirements.py:on_order_map, which only looks at open statuses)."""
+    order = db.query(PurchaseOrder).options(joinedload(PurchaseOrder.items).joinedload(PurchaseOrderItem.item)).get(order_id)
+    if not order:
+        return RedirectResponse(url="/purchase?error=Purchase order not found", status_code=303)
+    if order.status != "partially_received":
+        return RedirectResponse(
+            url=f"/purchase/{order_id}?error=Only a partially received order can be short closed",
+            status_code=303,
+        )
+    reason = (reason or "").strip()
+    if not reason:
+        return RedirectResponse(url=f"/purchase/{order_id}?error={quote('Enter a reason for short closing')}", status_code=303)
+    short_desc = ", ".join(
+        f"{l.item.name} x {format_qty(l.pending_quantity)}" for l in order.items if l.pending_quantity > 0
+    )
+    order.status = "received"
+    order.short_closed_at = datetime.utcnow()
+    order.short_closed_by = user.id
+    order.short_close_reason = reason
+    log_action(
+        db, user, "purchase_order", order.id, order.order_no, "status_change",
+        summary=f"partially_received -> received (short closed: {reason}). Not supplied: {short_desc}",
+    )
+    db.commit()
+    return RedirectResponse(url=f"/purchase/{order_id}?success={quote('Order short closed — balance will not be received')}", status_code=303)
 
 
 def get_purchase_order_delete_blockers(order: PurchaseOrder) -> list[str]:
@@ -814,7 +931,7 @@ def get_purchase_order_delete_blockers(order: PurchaseOrder) -> list[str]:
     approval, so it falls into the same "cancel instead" bucket as 'ordered'
     below rather than being treated like a plain draft."""
     blockers = []
-    if order.status == "received":
+    if order.status in ("received", "partially_received"):
         blockers.append("it has been received — stock levels and serial numbers were recorded against it")
     elif order.status not in ("draft", "pending_approval", "cancelled"):
         blockers.append(f"it's been approved and is '{order.status}' — cancel it instead to keep a record of what was ordered")

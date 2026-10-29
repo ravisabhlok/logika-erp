@@ -75,14 +75,21 @@ def item_sales_demand(db: Session, item_id: int) -> float:
     return demand.get(item_id, 0.0)
 
 
+# PO statuses whose un-received balance still counts as "on order". A
+# short-closed PO is 'received', so its balance drops out automatically.
+OPEN_PO_STATUSES = ("ordered", "partially_received")
+
+
 def on_order_qty(db: Session, item_id: int) -> float:
     """Quantity of `item_id` already placed with a vendor (PurchaseOrder
-    status 'ordered') but not yet received — counts toward covering a
-    shortfall without needing to be ordered again."""
+    status 'ordered' or 'partially_received') but not yet received —
+    counts toward covering a shortfall without needing to be ordered again.
+    Uses each line's pending balance (quantity - received_quantity), so the
+    part of a PO that's already arrived isn't double-counted with stock."""
     total = (
-        db.query(func.sum(PurchaseOrderItem.quantity))
+        db.query(func.sum(PurchaseOrderItem.quantity - PurchaseOrderItem.received_quantity))
         .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderItem.purchase_order_id)
-        .filter(PurchaseOrderItem.item_id == item_id, PurchaseOrder.status == "ordered")
+        .filter(PurchaseOrderItem.item_id == item_id, PurchaseOrder.status.in_(OPEN_PO_STATUSES))
         .scalar()
     )
     return float(total or 0)
@@ -90,17 +97,17 @@ def on_order_qty(db: Session, item_id: int) -> float:
 
 def on_order_map(db: Session) -> dict:
     """{item_id: qty} for every item with quantity on order — same definition
-    as on_order_qty() (PurchaseOrder status 'ordered', not yet received), but
+    as on_order_qty() (open PO, pending balance only), but
     one grouped query for all items at once, for list pages like Inventory
     that would otherwise run one query per row."""
     rows = (
-        db.query(PurchaseOrderItem.item_id, func.sum(PurchaseOrderItem.quantity))
+        db.query(PurchaseOrderItem.item_id, func.sum(PurchaseOrderItem.quantity - PurchaseOrderItem.received_quantity))
         .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderItem.purchase_order_id)
-        .filter(PurchaseOrder.status == "ordered")
+        .filter(PurchaseOrder.status.in_(OPEN_PO_STATUSES))
         .group_by(PurchaseOrderItem.item_id)
         .all()
     )
-    return {item_id: float(qty or 0) for item_id, qty in rows}
+    return {item_id: float(qty) for item_id, qty in rows if qty and float(qty) > 0}
 
 
 def last_vendor(db: Session, item_id: int):

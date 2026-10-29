@@ -101,7 +101,7 @@ DOWNLOADABLE_PURCHASE_STATUSES in app/routers/purchase.py).
     <td style="width: 45%;">
       <div class="doc-title">PURCHASE ORDER</div>
       <div class="doc-subtitle">Purchase Order# {{ order.order_no }}</div>
-      <div class="status-wrap"><span class="status-pill">{{ order.status|upper }}</span></div>
+      <div class="status-wrap"><span class="status-pill">{{ order.status.replace('_', ' ')|upper }}</span></div>
       <table class="order-meta">
         <tr><td class="m-label">Order Date :</td><td class="m-value">{{ order.order_date|dt('%d-%m-%Y') }}</td></tr>
         {% if order.currency != 'INR' %}

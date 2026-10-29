@@ -113,6 +113,7 @@ def record_po_bill(
     db: Session, order: PurchaseOrder, user: User,
     vendor_bill_no: str, bill_date: datetime, due_date, notes: str,
     attachment_filename: str = None, attachment_bytes: bytes = None,
+    quantities: dict = None,
 ) -> Bill:
     """Quick-entry path used by Purchase's own Receive step (an optional
     'enter the bill while you're here' section — see
@@ -120,8 +121,11 @@ def record_po_bill(
     a document-level bill at the PO's own quantities/prices with no line
     editing. One BillItem per PO line, at that line's own quantity/price —
     never the fuller, editable-line version that /bills/new's PO-based form
-    offers, since Receive only ever deals with the order's full, unedited
-    lines (there's no partial receipt in this app). Caller commits;
+    offers. `quantities` ({po_line_id: qty}) limits the bill to what arrived
+    in one shipment — the Receive step passes exactly the qty received
+    now, so a partial receipt gets a bill for just that part; lines missing
+    from it (or 0) are left off the bill. None = every line at its full
+    ordered qty. Caller commits;
     stock/serials are never touched here (purchase_order_item_id is set on
     every line, exactly like a PO-based /bills/new submission)."""
     bill = Bill(
@@ -134,13 +138,16 @@ def record_po_bill(
     taxable_total = 0.0
     gst_total = 0.0
     for po_line in order.items:
-        line_total = float(po_line.quantity) * float(po_line.unit_price)
+        qty = po_line.quantity if quantities is None else quantities.get(po_line.id, 0)
+        if not qty or float(qty) <= 0:
+            continue
+        line_total = float(qty) * float(po_line.unit_price)
         gst_pct = float(po_line.item.gst_percentage or 0)
         taxable_total += line_total
         gst_total += line_total * gst_pct / 100
         bill.items.append(BillItem(
             purchase_order_item_id=po_line.id, item_id=po_line.item_id,
-            quantity=po_line.quantity, unit_price=po_line.unit_price,
+            quantity=qty, unit_price=po_line.unit_price,
             gst_percentage=gst_pct, hsn_code=po_line.item.hsn_code, total=line_total,
         ))
     bill.taxable_amount = taxable_total
@@ -161,6 +168,29 @@ def record_po_bill(
     return bill
 
 
+# A PO can be billed as soon as anything has arrived — vendors usually bill
+# each dispatch separately when a PO is delivered in parts.
+BILLABLE_PO_STATUSES = ("partially_received", "received")
+
+
+def unbilled_qty_by_po_line(db: Session, order: PurchaseOrder) -> dict:
+    """{po_line_id: received qty not yet covered by a (non-cancelled) bill}
+    — the default qty the Record Bill form pre-fills per line, so billing
+    shipment-by-shipment never double-counts. Only a default: the form
+    stays editable to match whatever the vendor actually invoiced."""
+    billed = {}
+    for b in order.bills:
+        if b.status == "cancelled":
+            continue
+        for bi in b.items:
+            if bi.purchase_order_item_id:
+                billed[bi.purchase_order_item_id] = billed.get(bi.purchase_order_item_id, 0.0) + float(bi.quantity or 0)
+    return {
+        line.id: max(float(line.received_quantity or 0) - billed.get(line.id, 0.0), 0.0)
+        for line in order.items
+    }
+
+
 @router.get("")
 def list_bills(request: Request, db: Session = Depends(get_db), user: User = Depends(require_module_permission("bills", "view"))):
     bills = (
@@ -179,6 +209,7 @@ def new_bill_form(
     db: Session = Depends(get_db), user: User = Depends(require_module_permission("bills", "add")),
 ):
     order = None
+    unbilled = {}
     if po_id:
         order = (
             db.query(PurchaseOrder)
@@ -187,11 +218,12 @@ def new_bill_form(
         )
         if not order:
             return RedirectResponse(url="/purchase?error=Purchase order not found", status_code=303)
-        if order.status != "received":
+        if order.status not in BILLABLE_PO_STATUSES:
             return RedirectResponse(
-                url=f"/purchase/{po_id}?error=Only a received order can have a bill recorded against it",
+                url=f"/purchase/{po_id}?error=Only a received (or partially received) order can have a bill recorded against it",
                 status_code=303,
             )
+        unbilled = unbilled_qty_by_po_line(db, order)
 
     vendors = db.query(Vendor).order_by(Vendor.name).all()
     items = db.query(Item).filter(Item.is_active == True).order_by(Item.name).all()  # noqa: E712
@@ -200,7 +232,7 @@ def new_bill_form(
         {
             "request": request, "user": user, "order": order, "vendors": vendors, "items": items,
             "bill_date": datetime.utcnow().strftime("%Y-%m-%d"),
-            "submitted": {}, "errors": {},
+            "submitted": {}, "errors": {}, "unbilled": unbilled,
         },
     )
 
@@ -224,8 +256,8 @@ async def create_bill(
             .options(joinedload(PurchaseOrder.vendor), joinedload(PurchaseOrder.items).joinedload(PurchaseOrderItem.item))
             .get(int(po_id_str))
         )
-        if not order or order.status != "received":
-            return RedirectResponse(url="/purchase?error=Only a received order can have a bill recorded against it", status_code=303)
+        if not order or order.status not in BILLABLE_PO_STATUSES:
+            return RedirectResponse(url="/purchase?error=Only a received (or partially received) order can have a bill recorded against it", status_code=303)
         vendor_id = order.vendor_id
     else:
         vendor_id_str = (form.get("vendor_id") or "").strip()

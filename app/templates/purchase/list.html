@@ -12,6 +12,7 @@
       <option value="pending_approval">Pending Approval</option>
       <option value="pending_confirmation">Pending Confirmation</option>
       <option value="ordered">Ordered</option>
+      <option value="partially_received">Partially Received</option>
       <option value="received">Received</option>
       <option value="cancelled">Cancelled</option>
     </select>
@@ -31,7 +32,7 @@
         <td>{{ o.order_no }}</td>
         <td>{{ o.vendor.name }}</td>
         <td>{{ o.order_date|dt('%d-%b-%Y') }}</td>
-        <td><span class="badge bg-{{ {'draft':'secondary','pending_approval':'warning text-dark','pending_confirmation':'warning text-dark','ordered':'primary','received':'success','cancelled':'danger'}[o.status] }}">{{ o.status.replace('_', ' ') }}</span></td>
+        <td><span class="badge bg-{{ {'draft':'secondary','pending_approval':'warning text-dark','pending_confirmation':'warning text-dark','ordered':'primary','partially_received':'info text-dark','received':'success','cancelled':'danger'}[o.status] }}">{{ o.status.replace('_', ' ') }}</span></td>
         <td class="text-end">{{ o.total_amount|money(o.currency) }}{% if o.currency != 'INR' %} <span class="text-muted small">{{ o.currency }}</span>{% endif %}</td>
       </tr>
     {% else %}

@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ order.order_no }}{% endblock %}
 {% block content %}
+{% set show_receipt_cols = order.status in ('partially_received', 'received') %}
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h4 class="mb-0">{{ order.order_no }}</h4>
   <div>
@@ -12,10 +13,10 @@
       <button class="btn btn-outline-danger btn-sm">Delete</button>
     </form>
     {% endif %}
-    {% if order.status in ('ordered', 'received') %}
+    {% if order.status in ('ordered', 'partially_received', 'received') %}
     <a href="/purchase/{{ order.id }}/pdf" target="_blank" class="btn btn-outline-primary btn-sm">Download PO</a>
     {% endif %}
-    <span class="badge bg-{{ {'draft':'secondary','pending_approval':'warning text-dark','pending_confirmation':'warning text-dark','ordered':'primary','received':'success','cancelled':'danger'}[order.status] }} fs-6">{{ order.status.replace('_', ' ') }}</span>
+    <span class="badge bg-{{ {'draft':'secondary','pending_approval':'warning text-dark','pending_confirmation':'warning text-dark','ordered':'primary','partially_received':'info text-dark','received':'success','cancelled':'danger'}[order.status] }} fs-6">{{ order.status.replace('_', ' ') }}</span>
   </div>
 </div>
 
@@ -97,6 +98,21 @@
         {% if not perms.confirm and not perms.edit %}
         <span class="text-muted">No further actions.</span>
         {% endif %}
+      {% elif order.status == 'partially_received' %}
+        <div class="mb-2"><span class="badge bg-info text-dark">Partially received — balance pending from vendor</span></div>
+        {% if perms.edit %}
+        <a href="/purchase/{{ order.id }}/receive" class="btn btn-success btn-sm">Receive Balance</a>
+        <button type="button" class="btn btn-outline-warning btn-sm" onclick="document.getElementById('shortCloseBox').style.display='';this.style.display='none';">Short Close</button>
+        <form method="post" action="/purchase/{{ order.id }}/short-close" id="shortCloseBox" class="mt-2" style="display:none;"
+              onsubmit="return confirm('Short close {{ order.order_no }}? The pending balance will no longer be expected from the vendor.');">
+          <div class="input-group input-group-sm">
+            <input type="text" name="reason" class="form-control" placeholder="Reason (e.g. vendor can't supply balance)" required>
+            <button class="btn btn-warning">Confirm Short Close</button>
+          </div>
+        </form>
+        {% else %}
+        <span class="text-muted">No further actions.</span>
+        {% endif %}
       {% elif order.status == 'ordered' %}
         {% if perms.edit %}
         <a href="/purchase/{{ order.id }}/receive" class="btn btn-success btn-sm">Receive Order</a>
@@ -110,18 +126,29 @@
       {% else %}
       <span class="text-muted">No further actions.</span>
       {% endif %}
+      {% if order.short_closed_at %}
+      <div class="alert alert-warning py-2 px-3 mt-2 mb-0 small">
+        <strong>Short closed</strong> on {{ order.short_closed_at|dt('%d-%b-%Y') }}
+        {% if order.short_closed_by_user %}by {{ order.short_closed_by_user.full_name or order.short_closed_by_user.username }}{% endif %}
+        — {{ order.short_close_reason }}
+      </div>
+      {% endif %}
     </div>
   </div>
 </div>
 
 <div class="card p-3">
   <table class="table table-sm mb-0">
-    <thead><tr><th>Item</th><th class="text-end">Qty</th><th class="text-end">Unit Price</th><th class="text-end">Total</th><th>Delivery Date</th><th>Serial Numbers</th></tr></thead>
+    <thead><tr><th>Item</th><th class="text-end">Qty</th>{% if show_receipt_cols %}<th class="text-end">Received</th><th class="text-end">{{ 'Not Supplied' if order.short_closed_at else 'Pending' }}</th>{% endif %}<th class="text-end">Unit Price</th><th class="text-end">Total</th><th>Delivery Date</th><th>Serial Numbers</th></tr></thead>
     <tbody>
     {% for line in order.items %}
       <tr>
         <td>{{ line.item.name }}</td>
         <td class="text-end">{{ line.quantity|qty }}</td>
+        {% if show_receipt_cols %}
+        <td class="text-end">{{ line.received_quantity|qty }}</td>
+        <td class="text-end">{% if line.pending_quantity > 0 %}<span class="badge bg-{{ 'secondary' if order.short_closed_at else 'warning text-dark' }}">{{ line.pending_quantity|qty }}</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
+        {% endif %}
         <td class="text-end">{{ line.unit_price|money(order.currency) }}</td>
         <td class="text-end">{{ line.total|money(order.currency) }}</td>
         <td>{% if line.expected_delivery_date %}{{ line.expected_delivery_date.strftime('%d-%b-%Y') }}{% else %}<span class="text-muted">-</span>{% endif %}</td>
@@ -129,7 +156,8 @@
           {% if line.item.has_serial %}
             {% if line.serials %}
               <span class="small">{{ line.serials|map(attribute='serial_number')|join(', ') }}</span>
-            {% elif order.status == 'ordered' %}
+              {% if order.status == 'partially_received' and line.pending_quantity > 0 %}<span class="badge bg-warning text-dark">rest on receipt</span>{% endif %}
+            {% elif order.status in ('ordered', 'partially_received') %}
               <span class="badge bg-warning text-dark">to be captured on receipt</span>
             {% else %}
               <span class="text-muted">-</span>
@@ -142,15 +170,29 @@
     {% endfor %}
     </tbody>
     <tfoot>
-      <tr><th colspan="3" class="text-end">Order Total</th><th class="text-end">{{ order.total_amount|money(order.currency) }}</th><th></th><th></th></tr>
+      <tr><th colspan="{{ 5 if show_receipt_cols else 3 }}" class="text-end">Order Total</th><th class="text-end">{{ order.total_amount|money(order.currency) }}</th><th></th><th></th></tr>
     </tfoot>
   </table>
 </div>
 
+{% if receipts %}
+<div class="card p-3 mt-3">
+  <div class="text-muted small mb-2">Receipt History</div>
+  <table class="table table-sm mb-0">
+    <thead><tr><th>Received On</th><th>Item</th><th class="text-end">Qty</th></tr></thead>
+    <tbody>
+    {% for r in receipts %}
+      <tr><td>{{ r.transaction_date|dt('%d-%b-%Y %H:%M') }}</td><td>{{ r.item.name }}</td><td class="text-end">{{ r.quantity|qty }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
 <div class="card p-3 mt-3">
   <div class="d-flex justify-content-between align-items-center mb-2">
     <div class="text-muted small">Bills</div>
-    {% if order.status == 'received' and perms.add %}
+    {% if order.status in ('partially_received', 'received') and perms.add %}
     <a href="/bills/new?po_id={{ order.id }}" class="btn btn-outline-dark btn-sm">+ Record Bill</a>
     {% endif %}
   </div>
@@ -171,7 +213,7 @@
   </table>
   {% else %}
   <div class="text-muted small">
-    {% if order.status == 'received' %}No bill recorded against this order yet.{% else %}A bill can be recorded once this order is received.{% endif %}
+    {% if order.status in ('partially_received', 'received') %}No bill recorded against this order yet.{% else %}A bill can be recorded once this order is received.{% endif %}
   </div>
   {% endif %}
 </div>

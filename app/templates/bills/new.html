@@ -50,11 +50,13 @@
       <tbody>
       {% for line in order.items %}
         <tr>
-          <td>{{ line.item.name }}</td>
+          <td>{{ line.item.name }}
+            <div class="text-muted small">Ordered {{ line.quantity|qty }} · Received {{ line.received_quantity|qty }}{% if unbilled is defined and unbilled %} · Not yet billed {{ unbilled.get(line.id, 0)|qty }}{% endif %}</div>
+          </td>
           <td>
             <input type="hidden" name="purchase_order_item_id" value="{{ line.id }}">
-            <input type="number" name="quantity" class="form-control form-control-sm qty-input" min="0.0001" step="any"
-                   value="{{ submitted.lines[loop.index0].quantity if submitted.lines and loop.index0 < submitted.lines|length else (line.quantity|qty) }}"
+            <input type="number" name="quantity" class="form-control form-control-sm qty-input" min="0" step="any"
+                   value="{{ submitted.lines[loop.index0].quantity if submitted.lines and loop.index0 < submitted.lines|length else ((unbilled or {}).get(line.id, line.received_quantity)|qty) }}"
                    oninput="recalcRow(this)">
           </td>
           <td>
