@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Ledger - {{ p.name }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start mb-3">
+  <div><h4 class="mb-0">Ledger - {{ p.name }}</h4><div class="text-muted small">{{ p.category }}</div></div>
+  <a href="/payments/payees/{{ p.id }}" class="btn btn-outline-secondary btn-sm">Payee</a>
+</div>
+<div class="row g-3 mb-3">
+  <div class="col-md-4"><div class="card p-3"><div class="text-muted small">Due (all entries)</div><div class="fs-5">{{ due|inr }}</div></div></div>
+  <div class="col-md-4"><div class="card p-3"><div class="text-muted small">Paid (bank confirmed)</div><div class="fs-5 text-success">{{ paid|inr }}</div></div></div>
+  <div class="col-md-4"><div class="card p-3"><div class="text-muted small">Not yet paid</div><div class="fs-5 text-danger">{{ balance|inr }}</div></div></div>
+</div>
+<div class="card p-3">
+  <table class="table table-sm align-middle mb-0">
+    <thead><tr><th>Month</th><th>Due</th><th>Category</th><th>Description</th><th class="text-end">Amount</th><th>Status</th><th>UTR</th><th>Paid on</th></tr></thead>
+    <tbody>
+    {% for e in entries %}
+      {% set ln = lines.get(e.id) %}
+      <tr>
+        <td>{{ '%02d' % e.period_month }}/{{ e.period_year }}</td><td>{{ e.due_date.strftime('%d-%b-%Y') }}</td><td>{{ e.category }}</td><td>{{ e.description or '' }}</td>
+        <td class="text-end">{{ e.amount|inr }}</td><td><span class="badge {{ badge[e.status] }}">{{ e.status }}</span></td>
+        <td>{{ ln.bank_ref if ln and ln.bank_ref else '' }}</td><td>{{ ln.confirmed_on.strftime('%d-%b-%Y') if ln and ln.confirmed_on else '' }}</td>
+      </tr>
+    {% else %}<tr><td colspan="8" class="text-muted text-center">No expenses for this payee.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

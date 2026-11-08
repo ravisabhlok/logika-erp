@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}{{ p.name }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start mb-3">
+  <div><h4 class="mb-0">{{ p.name }}</h4><div class="text-muted small">{{ p.category }} · {{ p.bank_name or 'bank not set' }} · a/c {{ mask(p.account_no) or '-' }} · {{ p.ifsc or '-' }}</div></div>
+  <div class="d-flex gap-2">
+    <a href="/expenses/ledger/{{ p.id }}" class="btn btn-outline-secondary btn-sm">Expense ledger</a>
+    {% if perms.edit %}<a href="/payments/payees/{{ p.id }}/edit" class="btn btn-outline-secondary btn-sm">Edit</a>{% endif %}
+    {% if perms.delete %}<form method="post" action="/payments/payees/{{ p.id }}/delete" onsubmit="return confirm('Delete this payee?');"><button class="btn btn-outline-danger btn-sm">Delete</button></form>{% endif %}
+  </div>
+</div>
+{% if perms.edit and p.is_active %}
+<div class="card p-3 mb-3">
+  <div class="fw-semibold mb-2">Send for payment</div>
+  <form method="post" action="/payments/payees/{{ p.id }}/send" class="row g-2 align-items-end">
+    <div class="col-auto"><label class="form-label small mb-0">Amount</label><input type="number" step="0.01" min="0.01" name="amount" class="form-control form-control-sm" required></div>
+    <div class="col-auto"><label class="form-label small mb-0">Pay date</label><input type="date" name="pay_date" value="{{ today.strftime('%Y-%m-%d') }}" class="form-control form-control-sm" required></div>
+    <div class="col-auto"><label class="form-label small mb-0">Remark</label><input name="remark" value="{{ p.default_remark or '' }}" class="form-control form-control-sm"></div>
+    <div class="col-auto"><button class="btn btn-dark btn-sm">Send</button></div>
+  </form>
+</div>
+{% endif %}
+<div class="card p-3">
+  <div class="text-muted small mb-2">Payments</div>
+  <table class="table table-sm align-middle mb-0">
+    <thead><tr><th>Pay date</th><th class="text-end">Amount</th><th>Remark</th><th>Status</th><th>UTR</th></tr></thead>
+    <tbody>
+    {% for ln in lines %}
+      <tr><td>{{ ln.pay_date.strftime('%d-%b-%Y') if ln.pay_date }}</td><td class="text-end">{{ ln.amount|inr }}</td><td>{{ ln.remark or '' }}</td>
+      <td><span class="badge {{ badge[ln.status] }}">{{ status_text[ln.status] }}</span></td><td>{{ ln.bank_ref or '' }}</td></tr>
+    {% else %}<tr><td colspan="5" class="text-muted text-center">No payments yet.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

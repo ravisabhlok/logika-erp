@@ -30,6 +30,15 @@
   </div>
 </div>
 
+<div class="card p-3 mb-3">
+  <div class="text-muted small">Bank details (for bank payments)</div>
+  {% if vendor.bank_account_no %}
+  <div>{{ vendor.bank_name or 'Bank' }} · a/c {{ mask(vendor.bank_account_no) }} · IFSC {{ vendor.bank_ifsc or '-' }}</div>
+  {% else %}
+  <div class="text-muted">Not set{% if user.role == 'admin' %} — add them via Edit.{% else %} — an admin must add them before this vendor can be paid by bank.{% endif %}</div>
+  {% endif %}
+</div>
+
 {% if vendor.address %}
 <div class="card p-3 mb-3">
   <div class="text-muted small">Address</div>

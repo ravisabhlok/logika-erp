@@ -30,6 +30,21 @@
       <label class="form-label">GSTIN</label>
       <input type="text" name="gstin" class="form-control" value="{{ vendor.gstin if vendor else '' }}">
     </div>
+    <div class="fw-semibold mt-3">Bank details (for bank payments) {% if user.role != 'admin' %}<span class="badge bg-secondary">admin only</span>{% endif %}</div>
+    <div class="row mt-2">
+      <div class="col-md-4 mb-3">
+        <label class="form-label">Bank name</label>
+        <input type="text" name="bank_name" class="form-control" value="{{ (vendor.bank_name or '') if vendor else '' }}" {{ '' if user.role == 'admin' else 'readonly' }}>
+      </div>
+      <div class="col-md-4 mb-3">
+        <label class="form-label">Account number</label>
+        <input type="text" name="bank_account_no" class="form-control" value="{{ (vendor.bank_account_no or '') if vendor else '' }}" {{ '' if user.role == 'admin' else 'readonly' }}>
+      </div>
+      <div class="col-md-4 mb-3">
+        <label class="form-label">IFSC</label>
+        <input type="text" name="bank_ifsc" class="form-control" value="{{ (vendor.bank_ifsc or '') if vendor else '' }}" {{ '' if user.role == 'admin' else 'readonly' }}>
+      </div>
+    </div>
     <button type="submit" class="btn btn-dark">Save</button>
     <a href="/vendors" class="btn btn-link">Cancel</a>
   </form>

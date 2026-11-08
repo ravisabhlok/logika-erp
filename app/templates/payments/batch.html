@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Batch {{ b.batch_no }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start mb-3 flex-wrap gap-2">
+  <div>
+    <h4 class="mb-0">Batch {{ b.batch_no }}
+      <span class="badge bg-{{ {'Open':'primary','Downloaded':'warning text-dark','Confirmed':'success','Cancelled':'secondary'}[b.status] }} fs-6">{{ b.status }}</span></h4>
+    <div class="text-muted small">Pay date {{ b.pay_date.strftime('%d-%b-%Y') }} · {{ lines|length }} payment(s) · total {{ total|inr }} · file <code>{{ file_name }}</code>{% if b.title %} · {{ b.title }}{% endif %}</div>
+    {% if b.status == 'Cancelled' %}<div class="text-danger small">Cancelled: {{ b.cancel_reason }}</div>{% endif %}
+    {% if confirmation %}<div class="small text-success">Bank confirmation {{ confirmation.file_name }} loaded {{ confirmation.uploaded_at|dt }} ({{ confirmation.lines_matched }} matched)</div>{% endif %}
+  </div>
+  <a href="/payments" class="btn btn-outline-secondary btn-sm">Back</a>
+</div>
+
+{% if problems %}
+<div class="alert alert-warning"><div class="fw-semibold">Fix before downloading:</div><ul class="mb-0">{% for p in problems %}<li>{{ p }}</li>{% endfor %}</ul></div>
+{% endif %}
+{% if b.status == 'Downloaded' %}
+<div class="alert alert-info py-2">File downloaded - <strong>not paid yet</strong>. A payment counts as paid only after the bank's confirmation report is loaded ({{ n_confirmed }} of {{ lines|length }} confirmed).</div>
+{% endif %}
+
+<div class="card p-3 mb-3">
+  <table class="table table-sm align-middle mb-0">
+    <thead><tr><th>Beneficiary</th><th>Account</th><th>IFSC</th><th>Mode</th><th class="text-end">Amount</th><th>Remark</th><th>Status</th><th>UTR</th><th></th></tr></thead>
+    <tbody>
+    {% for ln in lines %}
+      <tr>
+        <td>{{ ln.beneficiary_name }}{% if ln.bank_note %} <span class="badge bg-warning text-dark" title="{{ ln.bank_note }}">bank changed</span>{% endif %}</td>
+        <td>{{ mask(ln.account_no) }}</td><td>{{ ln.ifsc }}</td><td>{{ mode_for(ln.ifsc, ln.amount) }}</td>
+        <td class="text-end">{{ ln.amount|inr }}</td><td>{{ ln.remark or '' }}</td>
+        <td><span class="badge {{ badge[ln.status] }}">{{ status_text[ln.status] }}</span></td>
+        <td>{{ ln.bank_ref or '' }}{% if ln.confirmed_on %}<br><span class="text-muted small">{{ ln.confirmed_on.strftime('%d-%b-%Y') }}</span>{% endif %}</td>
+        <td class="text-nowrap">
+          {% if perms.edit and b.status == 'Open' and ln.status == 'Batched' %}
+          <form method="post" action="/payments/batch/{{ b.id }}/remove/{{ ln.id }}" class="d-inline"><button class="btn btn-outline-secondary btn-sm py-0">Take out</button></form>
+          {% endif %}
+          {% if is_admin and ln.status == 'Downloaded' %}
+          <form method="post" action="/payments/batch/{{ b.id }}/fail/{{ ln.id }}" class="d-inline" onsubmit="var r=prompt('The bank did not pay this. Reason (min 5 letters):'); if(!r) return false; this.reason.value=r; return true;">
+            <input type="hidden" name="reason"><button class="btn btn-outline-danger btn-sm py-0">Mark as failed</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if perms.edit and b.status in ('Open', 'Downloaded') %}
+<div class="d-flex gap-3 flex-wrap align-items-start">
+  <form method="post" action="/payments/batch/{{ b.id }}/download" class="card p-3">
+    {% if b.status == 'Downloaded' %}
+    <div class="form-check mb-2"><input class="form-check-input" type="checkbox" name="old_file_deleted" value="1" id="oldDel"><label class="form-check-label small" for="oldDel">I have deleted the old file <code>{{ file_name }}</code> from my computer</label></div>
+    {% endif %}
+    <button class="btn btn-dark" {% if problems %}disabled{% endif %}>{{ 'Download bank file' if b.status == 'Open' else 'Download again' }}</button>
+  </form>
+  {% if not n_confirmed %}
+  <form method="post" action="/payments/batch/{{ b.id }}/cancel" class="card p-3 d-flex flex-row gap-2" onsubmit="return confirm('Cancel this batch? Its payments go back to the waiting list.');">
+    <input type="text" name="reason" class="form-control form-control-sm" placeholder="Reason{{ ' (required)' if b.status == 'Downloaded' else '' }}">
+    <button class="btn btn-outline-danger btn-sm text-nowrap">Cancel batch</button>
+  </form>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}

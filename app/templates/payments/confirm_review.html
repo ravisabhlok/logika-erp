@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Review bank report{% endblock %}
+{% block content %}
+<h4 class="mb-1">Review bank report</h4>
+<div class="text-muted small mb-3">{{ file_name }} - nothing has been saved yet.</div>
+{% for e in plan.errors %}<div class="alert alert-danger">{{ e }}</div>{% endfor %}
+<div class="d-flex gap-2 flex-wrap mb-3">
+  <span class="badge bg-success">{{ counts.paid }} will be confirmed</span>
+  <span class="badge bg-danger">{{ counts.rejected }} rejected by bank</span>
+  <span class="badge bg-secondary">{{ counts.pending }} not final</span>
+  <span class="badge bg-info text-dark">{{ counts.already }} already confirmed</span>
+  <span class="badge bg-warning text-dark">{{ counts.conflict }} conflict</span>
+  <span class="badge bg-dark">{{ counts.unmatched }} unmatched</span>
+</div>
+<div class="card p-3 mb-3">
+  <table class="table table-sm align-middle mb-0">
+    <thead><tr><th>Row</th><th>Beneficiary</th><th>Account</th><th class="text-end">Amount</th><th>Bank status</th><th>UTR</th><th>Result</th><th>Our payment</th></tr></thead>
+    <tbody>
+    {% for it in plan['items'] %}
+      <tr>
+        <td>{{ it.row }}</td><td>{{ it.name }}</td><td>{{ mask(it.account) }}</td>
+        <td class="text-end">{{ it.amount|inr if it.amount is not none else '-' }}</td>
+        <td>{{ it.status }}{% if it.reason %}<br><span class="text-danger small">{{ it.reason }}</span>{% endif %}</td>
+        <td>{{ it.utr }}</td>
+        <td><span class="badge bg-{{ {'paid':'success','rejected':'danger','pending':'secondary','already':'info text-dark','conflict':'warning text-dark','unmatched':'dark'}[it.outcome] }}">{{ it.outcome }}</span>{% if it.note %}<div class="small text-muted">{{ it.note }}</div>{% endif %}</td>
+        <td class="small">{% if it.line %}{{ it.line.beneficiary_name }}{% if it.line.batch %}<br>{{ it.line.batch.batch_no }}{% endif %}{% else %}-{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+<form method="post" action="/payments/confirm/apply" class="d-flex gap-2">
+  <input type="hidden" name="token" value="{{ token }}"><input type="hidden" name="file_name" value="{{ file_name }}">
+  <button class="btn btn-dark" {% if plan.errors or (not counts.paid and not counts.rejected) %}disabled{% endif %}>Confirm and save</button>
+  <a href="/payments" class="btn btn-outline-secondary">Cancel</a>
+</form>
+{% endblock %}

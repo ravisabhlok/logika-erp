@@ -93,6 +93,23 @@
           </a>
         </div>
       </div>
+      <div class="nav-group {{ 'open' if request.url.path.startswith('/payments') or request.url.path.startswith('/expenses') else '' }}">
+        <button type="button" class="nav-item nav-group-toggle" onclick="toggleNavGroup(this)">
+          <i class="bi bi-bank"></i><span>Payments</span>
+          <i class="bi bi-chevron-down nav-group-caret"></i>
+        </button>
+        <div class="nav-group-items">
+          <a href="/payments" class="nav-item nav-subitem {{ 'active' if request.url.path == '/payments' or request.url.path.startswith('/payments/batch') else '' }}">
+            <i class="bi bi-bank"></i><span>Bank Payments</span>
+          </a>
+          <a href="/expenses" class="nav-item nav-subitem {{ 'active' if request.url.path.startswith('/expenses') else '' }}">
+            <i class="bi bi-wallet2"></i><span>Expenses</span>
+          </a>
+          <a href="/payments/payees" class="nav-item nav-subitem {{ 'active' if request.url.path.startswith('/payments/payees') else '' }}">
+            <i class="bi bi-person-lines-fill"></i><span>Payees</span>
+          </a>
+        </div>
+      </div>
       <a href="/production" class="nav-item {{ 'active' if request.url.path.startswith('/production') else '' }}">
         <i class="bi bi-gear-wide-connected"></i><span>Production</span>
       </a>

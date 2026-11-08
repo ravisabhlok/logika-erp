@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Edit bank for this payment{% endblock %}
+{% block content %}
+<h4 class="mb-1">Edit bank - this payment only</h4>
+<div class="text-muted small mb-3">{{ ln.beneficiary_name }}, {{ ln.amount|inr }}, currently a/c {{ mask(ln.account_no) }} {{ ln.ifsc }}. The saved vendor/payee details are not changed.</div>
+<div class="card p-4" style="max-width:560px;">
+  <form method="post" action="/payments/edit_bank/{{ ln.id }}">
+    <div class="mb-3"><label class="form-label">Beneficiary name *</label><input name="beneficiary_name" class="form-control" value="{{ ln.beneficiary_name }}" required></div>
+    <div class="mb-3"><label class="form-label">Account number *</label><input name="account_no" class="form-control" value="{{ ln.account_no or '' }}" required></div>
+    <div class="row"><div class="col-md-6 mb-3"><label class="form-label">IFSC *</label><input name="ifsc" class="form-control" value="{{ ln.ifsc or '' }}" required></div>
+    <div class="col-md-6 mb-3"><label class="form-label">Bank name</label><input name="bank_name" class="form-control" value="{{ ln.bank_name or '' }}"></div></div>
+    <div class="mb-3"><label class="form-label">Reason *</label><input name="reason" class="form-control" required></div>
+    <button class="btn btn-dark">Save for this payment</button> <a href="/payments" class="btn btn-link">Cancel</a>
+  </form>
+</div>
+{% endblock %}

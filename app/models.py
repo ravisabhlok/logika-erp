@@ -8,7 +8,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     Column, Integer, String, Text, DateTime, Numeric, ForeignKey,
-    Boolean, Enum, UniqueConstraint, Table,
+    Boolean, Enum, UniqueConstraint, Table, Date, LargeBinary,
 )
 from sqlalchemy.orm import relationship
 
@@ -28,6 +28,9 @@ class Company(Base):
     gstin = Column(String(20))
     phone = Column(String(30))
     email = Column(String(120))
+    # The company's own bank account that bank-payment files debit (ICICI
+    # DEBIT_ACC_NO). Set on the Bank Payments page by an admin.
+    bank_debit_acc = Column(String(30), nullable=True)
 
 
 class User(Base):
@@ -164,6 +167,11 @@ class Vendor(Base):
     phone = Column(String(30))
     address = Column(Text)
     gstin = Column(String(20))
+    # Bank details the vendor is paid into by bank payment (admin-only to
+    # change — see app/routers/vendors.py).
+    bank_name = Column(String(60), nullable=True)
+    bank_account_no = Column(String(30), nullable=True)
+    bank_ifsc = Column(String(15), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     purchase_orders = relationship("PurchaseOrder", back_populates="vendor")
@@ -789,6 +797,9 @@ class BillPayment(Base):
     mode = Column(String(30), nullable=True)
     reference_no = Column(String(80), nullable=True)
     notes = Column(Text, nullable=True)
+    # Set when a bank-confirmed PaymentLine created this payment
+    # (app/payments_service.py:sync_source) rather than it being typed in.
+    payment_line_id = Column(Integer, ForeignKey("payment_lines.id"), nullable=True, index=True)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -905,6 +916,141 @@ class ItemSerial(Base):
     invoice_item = relationship("InvoiceItem", back_populates="serials")
     bill_item = relationship("BillItem", back_populates="serials")
     production_order = relationship("ProductionOrder", back_populates="serials")
+
+
+# ---------------------------------------------------------------------------
+# Bank payments (send -> queue -> batch -> bank file -> bank confirmation)
+# Ported from CRM2; see "Bank payments" in CLAUDE.md.
+# ---------------------------------------------------------------------------
+
+class Payee(Base):
+    """A beneficiary that is not a Vendor (owner, landlord, utility, one-off).
+    Vendors are paid from their bill, using the bank details on Vendor."""
+    __tablename__ = "payees"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(150), nullable=False)
+    nickname = Column(String(60), nullable=True)
+    category = Column(String(20), nullable=False, default="Other")
+    bank_name = Column(String(60), nullable=True)
+    account_no = Column(String(30), nullable=True)
+    ifsc = Column(String(15), nullable=True)
+    mobile = Column(String(15), nullable=True)
+    email = Column(String(100), nullable=True)
+    default_remark = Column(String(100), nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    is_deleted = Column(Boolean, nullable=False, default=False)  # soft delete: history kept
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ExpenseTemplate(Base):
+    """A recurring expense (rent, electricity ...). Creates nothing by itself:
+    'Prepare recurring' turns each active template into that month's entry."""
+    __tablename__ = "expense_templates"
+
+    id = Column(Integer, primary_key=True)
+    payee_id = Column(Integer, ForeignKey("payees.id"), nullable=False)
+    category = Column(String(20), nullable=False)
+    description = Column(String(100), nullable=True)
+    amount = Column(Numeric(12, 2), nullable=False)
+    day_of_month = Column(Integer, nullable=False, default=1)  # 1-28
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    payee = relationship("Payee")
+
+
+class ExpenseEntry(Base):
+    """One amount to pay one payee for one month. `status` mirrors the bank
+    payment: Pending -> Queued -> In batch -> Downloaded -> Paid."""
+    __tablename__ = "expense_entries"
+    __table_args__ = (UniqueConstraint("template_id", "period_year", "period_month", name="uq_expense_template_period"),)
+
+    id = Column(Integer, primary_key=True)
+    payee_id = Column(Integer, ForeignKey("payees.id"), nullable=False)
+    template_id = Column(Integer, ForeignKey("expense_templates.id"), nullable=True)
+    category = Column(String(20), nullable=False)
+    description = Column(String(100), nullable=True)
+    bill_no = Column(String(40), nullable=True)
+    amount = Column(Numeric(12, 2), nullable=False)
+    due_date = Column(Date, nullable=False)
+    period_year = Column(Integer, nullable=False)
+    period_month = Column(Integer, nullable=False)
+    status = Column(String(12), nullable=False, default="Pending")
+    is_cancelled = Column(Boolean, nullable=False, default=False)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    payee = relationship("Payee")
+
+
+class PaymentBatch(Base):
+    """A bank bulk-upload file for one pay date. Open -> Downloaded (file
+    made, NOT complete) -> Confirmed (bank confirmation loaded) / Cancelled."""
+    __tablename__ = "payment_batches"
+
+    id = Column(Integer, primary_key=True)
+    batch_no = Column(String(30), nullable=False, unique=True)
+    title = Column(String(100), nullable=True)
+    pay_date = Column(Date, nullable=False)
+    status = Column(String(12), nullable=False, default="Open")
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    exported_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    exported_at = Column(DateTime, nullable=True)
+    cancel_reason = Column(String(200), nullable=True)
+    file_name = Column(String(120), nullable=True)  # fixed at first download, never changed
+
+    lines = relationship("PaymentLine", back_populates="batch", order_by="PaymentLine.id")
+
+
+class PaymentLine(Base):
+    """One payment. Created by the page it comes from (a bill, an expense, a
+    payee) as Queued. Queued -> Batched -> Downloaded -> Confirmed (only when
+    the bank's confirmation is loaded); Withdrawn = taken back out."""
+    __tablename__ = "payment_lines"
+
+    id = Column(Integer, primary_key=True)
+    batch_id = Column(Integer, ForeignKey("payment_batches.id"), nullable=True)
+    source_type = Column(String(10), nullable=False)  # BILL / EXPENSE / PAYEE
+    source_id = Column(Integer, nullable=True)
+    payee_id = Column(Integer, ForeignKey("payees.id"), nullable=True)
+    vendor_id = Column(Integer, ForeignKey("vendors.id"), nullable=True)
+    beneficiary_name = Column(String(150), nullable=False)
+    account_no = Column(String(30), nullable=True)
+    ifsc = Column(String(15), nullable=True)
+    bank_name = Column(String(60), nullable=True)
+    mode = Column(String(6), nullable=False, default="NEFT")
+    amount = Column(Numeric(12, 2), nullable=False)
+    remark = Column(String(100), nullable=True)
+    pay_date = Column(Date, nullable=True)
+    requested_pay_date = Column(Date, nullable=True)
+    status = Column(String(12), nullable=False, default="Queued", index=True)
+    requested_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    requested_at = Column(DateTime, nullable=True)
+    exported_at = Column(DateTime, nullable=True)
+    bank_ref = Column(String(40), nullable=True)  # UTR
+    confirmed_on = Column(Date, nullable=True)
+    withdraw_reason = Column(String(200), nullable=True)
+    bank_note = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    batch = relationship("PaymentBatch", back_populates="lines")
+
+
+class PaymentConfirmation(Base):
+    """The bank's confirmation file for a batch (first file per batch)."""
+    __tablename__ = "payment_confirmations"
+
+    id = Column(Integer, primary_key=True)
+    batch_id = Column(Integer, ForeignKey("payment_batches.id"), nullable=False, unique=True)
+    file_name = Column(String(200), nullable=True)
+    file_data = Column(LargeBinary(length=16777215), nullable=True)
+    uploaded_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    uploaded_at = Column(DateTime, default=datetime.utcnow)
+    lines_matched = Column(Integer, nullable=True)
+    notes = Column(String(200), nullable=True)
 
 
 # ---------------------------------------------------------------------------

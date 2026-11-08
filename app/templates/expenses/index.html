@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Expenses{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <h4 class="mb-0">Expenses</h4>
+  <div class="d-flex gap-2 flex-wrap">
+    <a href="/expenses/recurring" class="btn btn-outline-secondary btn-sm">Recurring</a>
+    <a href="/payments" class="btn btn-outline-secondary btn-sm">Bank Payments</a>
+    {% if perms.edit %}<a href="/expenses/add" class="btn btn-dark btn-sm">+ New Expense</a>{% endif %}
+  </div>
+</div>
+
+<div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
+  <form method="get" class="d-flex gap-2 align-items-center">
+    <span class="text-muted small">Show a date range:</span>
+    <input type="date" name="from" value="{{ d_from.strftime('%Y-%m-%d') if d_from else '' }}" class="form-control form-control-sm" style="width:140px;">
+    <input type="date" name="to" value="{{ d_to.strftime('%Y-%m-%d') if d_to else '' }}" class="form-control form-control-sm" style="width:140px;">
+    <button class="btn btn-outline-secondary btn-sm">Show</button>
+    {% if d_from or d_to %}<a href="/expenses" class="btn btn-link btn-sm">Latest {{ limit }}</a>{% endif %}
+  </form>
+  {% if perms.edit %}
+  <form method="post" action="/expenses/prepare" class="d-flex gap-2 align-items-center">
+    <input type="hidden" name="year" value="{{ year }}"><input type="hidden" name="month" value="{{ month }}">
+    <button class="btn btn-outline-dark btn-sm">Prepare recurring for {{ month_name }} {{ year }}</button>
+    {% if unprepared %}<span class="badge bg-warning text-dark">{{ unprepared|length }} not prepared</span>{% endif %}
+  </form>
+  {% endif %}
+</div>
+
+<form method="post" action="/expenses/send">
+  <input type="hidden" name="year" value="{{ year }}"><input type="hidden" name="month" value="{{ month }}">
+  <div class="card p-3">
+    {% if perms.edit %}
+    <div class="d-flex gap-2 align-items-center mb-2">
+      <input type="date" name="pay_date" value="{{ today.strftime('%Y-%m-%d') }}" class="form-control form-control-sm" style="width:150px;">
+      <button class="btn btn-dark btn-sm">Send ticked for payment</button>
+    </div>
+    {% endif %}
+    <table class="table table-sm align-middle mb-0">
+      <thead><tr><th style="width:30px;"><input type="checkbox" onclick="document.querySelectorAll('.pick').forEach(c=>c.checked=this.checked)"></th><th>Due</th><th>Payee</th><th>Category</th><th>Description</th><th>Bill no</th><th class="text-end">Amount</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+      {% for e in entries %}
+        <tr>
+          <td>{% if e.status == 'Pending' %}<input type="checkbox" class="pick" name="entry_id" value="{{ e.id }}">{% endif %}</td>
+          <td>{{ e.due_date.strftime('%d-%b-%Y') }}</td>
+          <td><a href="/expenses/ledger/{{ e.payee_id }}" class="text-decoration-none">{{ e.payee.name }}</a></td>
+          <td>{{ e.category }}{% if e.template_id %} <span class="badge bg-light text-dark border">recurring</span>{% endif %}</td>
+          <td>{{ e.description or '' }}</td><td>{{ e.bill_no or '' }}</td>
+          <td class="text-end">{{ e.amount|inr }}</td>
+          <td><span class="badge {{ badge[e.status] }}">{{ e.status }}</span></td>
+          <td class="text-nowrap">
+            {% if perms.edit and e.status == 'Pending' %}
+            <a href="/expenses/{{ e.id }}/edit" class="btn btn-outline-secondary btn-sm py-0">Edit</a>
+            <button class="btn btn-outline-danger btn-sm py-0" formaction="/expenses/{{ e.id }}/cancel" formnovalidate onclick="return confirm('Cancel this expense?');">Cancel</button>
+            {% endif %}
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="9" class="text-muted text-center">No expenses yet.</td></tr>
+      {% endfor %}
+      </tbody>
+      {% if entries %}<tfoot><tr><td colspan="6" class="text-end text-muted">Total shown / unpaid</td><td class="text-end fw-semibold">{{ total|inr }}</td><td colspan="2" class="text-muted">unpaid {{ unpaid|inr }}</td></tr></tfoot>{% endif %}
+    </table>
+  </div>
+</form>
+{% endblock %}

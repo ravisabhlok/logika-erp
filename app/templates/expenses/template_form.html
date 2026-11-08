@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Edit recurring expense{% endblock %}
+{% block content %}
+<h4 class="mb-3">Edit recurring expense</h4>
+<div class="card p-4" style="max-width:640px;">
+  <form method="post" action="/expenses/recurring/{{ t.id }}/edit">
+    <div class="mb-3"><label class="form-label">Pay to *</label>
+      <select name="payee_id" class="form-select" required>{% for p in payees %}<option value="{{ p.id }}" {{ 'selected' if t.payee_id == p.id }}>{{ p.name }} ({{ p.category }})</option>{% endfor %}</select></div>
+    <div class="row">
+      <div class="col-md-6 mb-3"><label class="form-label">Category</label>
+        <select name="category" class="form-select">{% for c in categories %}<option {{ 'selected' if t.category == c }}>{{ c }}</option>{% endfor %}</select></div>
+      <div class="col-md-6 mb-3"><label class="form-label">Amount *</label><input type="number" step="0.01" min="0.01" name="amount" class="form-control" value="{{ t.amount }}" required></div>
+    </div>
+    <div class="mb-3"><label class="form-label">Description</label><input name="description" class="form-control" value="{{ t.description or '' }}"></div>
+    <div class="mb-3" style="max-width:220px;"><label class="form-label">Day of month (1-28)</label><input type="number" min="1" max="28" name="recur_day" class="form-control" value="{{ t.day_of_month }}"></div>
+    <div class="form-check mb-3"><input class="form-check-input" type="checkbox" name="is_active" id="act" {{ 'checked' if t.is_active }}><label class="form-check-label" for="act">Active</label></div>
+    <div class="text-muted small mb-3">Applies to months prepared from now on; months already prepared are not changed.</div>
+    <button class="btn btn-dark">Save</button> <a href="/expenses/recurring" class="btn btn-link">Cancel</a>
+  </form>
+</div>
+{% endblock %}

@@ -23,6 +23,7 @@ MODULES = [
     ("bills", "Bills"),
     ("inventory", "Inventory"),
     ("production", "Production"),
+    ("payments", "Bank Payments"),
 ]
 MODULE_KEYS = [key for key, _ in MODULES]
 

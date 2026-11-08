@@ -1,17 +1,38 @@
+import re
+from urllib.parse import quote
+
 from fastapi import APIRouter, Request, Depends, Form
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.audit import log_action
 from app.auth import require_module_permission, get_user_module_permissions
 from app.formatting import format_inr, format_dt
 from app.models import Vendor, PurchaseOrder, User
+from app.payments_service import mask
 
 router = APIRouter(prefix="/vendors", tags=["vendors"])
 templates = Jinja2Templates(directory="app/templates")
 templates.env.filters["inr"] = format_inr
 templates.env.filters["dt"] = format_dt
+templates.env.globals["mask"] = mask
+
+
+def _apply_bank_details(vendor: Vendor, bank_name: str, account_no: str, ifsc: str):
+    """Validate and set the vendor's bank details (caller has checked the user is an admin).
+    Returns an error message, or None when saved onto the object."""
+    account = re.sub(r"[^0-9A-Za-z]", "", account_no or "")
+    code = re.sub(r"[^0-9A-Za-z]", "", ifsc or "").upper()
+    if code and not re.fullmatch(r"[A-Z]{4}0[A-Z0-9]{6}", code):
+        return "IFSC must be 11 characters, like SBIN0001234"
+    if account and not re.fullmatch(r"[0-9A-Za-z]{5,30}", account):
+        return "Account number must be 5 to 30 letters/digits"
+    vendor.bank_name = (bank_name or "").strip()[:60] or None
+    vendor.bank_account_no = account or None
+    vendor.bank_ifsc = code or None
+    return None
 
 
 @router.get("")
@@ -35,6 +56,9 @@ def create_vendor(
     phone: str = Form(""),
     address: str = Form(""),
     gstin: str = Form(""),
+    bank_name: str = Form(""),
+    bank_account_no: str = Form(""),
+    bank_ifsc: str = Form(""),
     db: Session = Depends(get_db),
     user: User = Depends(require_module_permission("vendors", "add")),
 ):
@@ -42,6 +66,10 @@ def create_vendor(
         name=name, contact_person=contact_person, email=email,
         phone=phone, address=address, gstin=gstin,
     )
+    if user.role == "admin":  # bank details: admin only
+        error = _apply_bank_details(vendor, bank_name, bank_account_no, bank_ifsc)
+        if error:
+            return RedirectResponse(url=f"/vendors/new?error={quote(error)}", status_code=303)
     db.add(vendor)
     db.commit()
     return RedirectResponse(url=f"/vendors/{vendor.id}?success=Vendor created", status_code=303)
@@ -79,10 +107,21 @@ def update_vendor(
     phone: str = Form(""),
     address: str = Form(""),
     gstin: str = Form(""),
+    bank_name: str = Form(""),
+    bank_account_no: str = Form(""),
+    bank_ifsc: str = Form(""),
     db: Session = Depends(get_db),
     user: User = Depends(require_module_permission("vendors", "edit")),
 ):
     vendor = db.query(Vendor).get(vendor_id)
+    if user.role == "admin":  # bank details: admin only, audited (old/new masked)
+        old = f"{mask(vendor.bank_account_no)} {vendor.bank_ifsc or ''}".strip()
+        error = _apply_bank_details(vendor, bank_name, bank_account_no, bank_ifsc)
+        if error:
+            return RedirectResponse(url=f"/vendors/{vendor_id}/edit?error={quote(error)}", status_code=303)
+        new = f"{mask(vendor.bank_account_no)} {vendor.bank_ifsc or ''}".strip()
+        if old != new:
+            log_action(db, user, "vendor", vendor.id, vendor.name, "bank_details", summary=f"Bank details changed from '{old}' to '{new}'")
     vendor.name = name
     vendor.contact_person = contact_person
     vendor.email = email

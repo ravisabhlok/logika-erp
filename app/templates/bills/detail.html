@@ -112,7 +112,8 @@
         <td>{{ p.reference_no or '-' }}</td>
         <td>{{ p.notes or '-' }}</td>
         <td>
-          {% if bill.status != 'cancelled' and perms.edit %}
+          {% if p.payment_line_id %}<span class="badge bg-success">bank confirmed</span>
+          {% elif bill.status != 'cancelled' and perms.edit %}
           <form method="post" action="/bills/{{ bill.id }}/payments/{{ p.id }}/delete" onsubmit="return confirm('Remove this payment of {{ p.amount }}?');">
             <button class="btn btn-sm btn-outline-danger">Remove</button>
           </form>
@@ -125,7 +126,46 @@
     </tbody>
   </table>
 
+  {% if bank.lines %}
+  <div class="text-muted small mb-1">Bank payments</div>
+  <table class="table table-sm mb-3">
+    <thead><tr><th>Pay date</th><th class="text-end">Amount</th><th>Status</th><th>Batch</th><th>UTR</th></tr></thead>
+    <tbody>
+    {% for ln in bank.lines %}
+      <tr>
+        <td>{{ ln.pay_date.strftime('%d-%b-%Y') if ln.pay_date }}</td>
+        <td class="text-end">{{ ln.amount|inr }}</td>
+        <td><span class="badge {{ bank_badge[ln.status] }}">{{ bank_status_text[ln.status] }}</span></td>
+        <td>{% if ln.batch %}<a href="/payments/batch/{{ ln.batch.id }}">{{ ln.batch.batch_no }}</a>{% else %}-{% endif %}</td>
+        <td>{{ ln.bank_ref or '' }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  {% if bill.status != 'cancelled' and send_balance > 0.005 and perms.edit %}
+  <div class="border rounded p-2 mb-3">
+    <div class="fw-semibold small mb-1">Pay by bank transfer</div>
+    {% if not bill.vendor.bank_account_no or not bill.vendor.bank_ifsc %}
+    <div class="text-muted small">{{ bill.vendor.name }} has no bank account / IFSC — an admin must add them on the <a href="/vendors/{{ bill.vendor.id }}">vendor page</a>.</div>
+    {% elif bank.in_progress > 0 %}
+    <div class="text-muted small">A bank payment of {{ bank.in_progress|inr }} is waiting for the bank. Finish or withdraw it on the <a href="/payments">Bank Payments</a> page before sending another.</div>
+    {% else %}
+    <form method="post" action="/bills/{{ bill.id }}/send-payment" class="row g-2 align-items-end">
+      <div class="col-auto"><label class="form-label small mb-0">Amount</label>
+        <input type="number" name="amount" step="0.01" min="0.01" max="{{ '%.2f' % send_balance }}" value="{{ '%.2f' % send_balance }}" class="form-control form-control-sm" required></div>
+      <div class="col-auto"><label class="form-label small mb-0">Pay date</label>
+        <input type="date" name="pay_date" value="{{ today }}" class="form-control form-control-sm" required></div>
+      <div class="col-auto text-muted small align-self-center">to {{ bill.vendor.name }}, a/c {{ mask(bill.vendor.bank_account_no) }}</div>
+      <div class="col-auto"><button class="btn btn-dark btn-sm">Send for bank payment</button></div>
+    </form>
+    {% endif %}
+  </div>
+  {% endif %}
+
   {% if bill.status != 'cancelled' and (bill.total_amount - bill.amount_paid) > 0.005 and perms.edit %}
+  <div class="text-muted small mb-1">Or record a payment made outside the bank file (cheque, cash, manual transfer)</div>
   <form method="post" action="/bills/{{ bill.id }}/payments" class="row g-2 align-items-end">
     <div class="col-auto">
       <label class="form-label small mb-0">Date</label>

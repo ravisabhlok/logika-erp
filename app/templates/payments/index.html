@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}Bank Payments{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <h4 class="mb-0">Bank Payments</h4>
+  <div class="d-flex gap-2">
+    <a href="/payments/payees" class="btn btn-outline-secondary btn-sm">Payees</a>
+    <a href="/expenses" class="btn btn-outline-secondary btn-sm">Expenses</a>
+    {% if perms.edit %}
+    <button class="btn btn-dark btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#confirmBox">Load bank confirmation</button>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card p-3 mb-3">
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <div>
+      <span class="text-muted small">Debit account (company)</span>
+      <span class="fw-semibold ms-2">{{ mask(company.bank_debit_acc) if company and company.bank_debit_acc else 'not set' }}</span>
+    </div>
+    {% if is_admin %}
+    <form method="post" action="/payments/settings" class="d-flex gap-2">
+      <input type="text" name="bank_debit_acc" class="form-control form-control-sm" placeholder="Debit account no." style="width:200px;" required>
+      <button class="btn btn-outline-dark btn-sm">Save</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+
+{% if perms.edit %}
+<div class="collapse mb-3" id="confirmBox">
+  <div class="card p-3">
+    <div class="fw-semibold mb-1">Load the bank's confirmation report</div>
+    <div class="text-muted small mb-2">The ICICI BizPay360 "Reverse MIS" Excel attached to the bank's e-mail. You will see what it would change before anything is saved.</div>
+    <form method="post" action="/payments/confirm" enctype="multipart/form-data" class="d-flex gap-2">
+      <input type="file" name="report" accept=".xlsx" class="form-control form-control-sm" required>
+      <button class="btn btn-dark btn-sm text-nowrap">Review</button>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+<h6>Waiting for a batch</h6>
+{% if not groups %}
+<div class="card p-3 mb-3 text-muted">Nothing is waiting. Send a bill, an expense or a payee payment for payment and it appears here.</div>
+{% endif %}
+{% for pay_date, lines in groups %}
+<div class="card p-3 mb-3">
+  <form method="post">
+    <input type="hidden" name="pay_date" value="{{ pay_date.strftime('%Y-%m-%d') if pay_date else '' }}">
+    <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
+      <div class="fw-semibold">Pay date {{ pay_date.strftime('%d-%b-%Y') if pay_date else '-' }} <span class="text-muted small">({{ lines|length }})</span></div>
+      {% if perms.edit %}
+      <div class="d-flex gap-2 align-items-center flex-wrap">
+        <input type="text" name="title" class="form-control form-control-sm" placeholder="Batch title (optional)" style="width:190px;">
+        <button class="btn btn-dark btn-sm" formaction="/payments/make_batch">Make batch</button>
+        <button class="btn btn-outline-secondary btn-sm" formaction="/payments/change_dates">Save pay dates</button>
+        <input type="text" name="reason" class="form-control form-control-sm" placeholder="Reason (optional)" style="width:150px;">
+        <button class="btn btn-outline-danger btn-sm" formaction="/payments/withdraw" onclick="return confirm('Delete the ticked payments from the queue?');">Delete ticked</button>
+      </div>
+      {% endif %}
+    </div>
+    <table class="table table-sm align-middle mb-0">
+      <thead><tr><th style="width:30px;"><input type="checkbox" onclick="this.closest('table').querySelectorAll('.pick').forEach(c=>c.checked=this.checked)"></th><th>Beneficiary</th><th>Account</th><th>IFSC</th><th>Mode</th><th class="text-end">Amount</th><th>Remark</th><th>Pay date</th><th>Sent by</th><th></th></tr></thead>
+      <tbody>
+      {% for ln in lines %}
+        <tr>
+          <td><input type="checkbox" class="pick" name="line_id" value="{{ ln.id }}"></td>
+          <td>{{ ln.beneficiary_name }}{% if ln.bank_note %} <span class="badge bg-warning text-dark" title="{{ ln.bank_note }}">bank changed</span>{% endif %}</td>
+          <td>{{ mask(ln.account_no) }}</td>
+          <td>{{ ln.ifsc }}</td>
+          <td>{{ ln.mode }}</td>
+          <td class="text-end">{{ ln.amount|inr }}</td>
+          <td>{{ ln.remark or '' }}</td>
+          <td><input type="date" name="date_{{ ln.id }}" value="{{ ln.pay_date.strftime('%Y-%m-%d') if ln.pay_date else '' }}" class="form-control form-control-sm" style="width:140px;" {% if not perms.edit %}disabled{% endif %}></td>
+          <td class="small">{{ names.get(ln.requested_by, '-') }}<br><span class="text-muted">{{ ln.requested_at.strftime('%d-%b %H:%M') if ln.requested_at else '' }}</span></td>
+          <td>{% if is_admin %}<a href="/payments/edit_bank/{{ ln.id }}" class="btn btn-outline-secondary btn-sm py-0">Edit bank</a>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </form>
+</div>
+{% endfor %}
+
+<div class="d-flex justify-content-between align-items-center mt-4 mb-2 flex-wrap gap-2">
+  <h6 class="mb-0">{{ 'Batches in the chosen dates' if showing_history else 'Batches in progress' }}</h6>
+  <form method="get" class="d-flex gap-2 align-items-center">
+    <span class="text-muted small">History:</span>
+    <input type="date" name="from" value="{{ d_from.strftime('%Y-%m-%d') if d_from else '' }}" class="form-control form-control-sm" style="width:140px;">
+    <input type="date" name="to" value="{{ d_to.strftime('%Y-%m-%d') if d_to else '' }}" class="form-control form-control-sm" style="width:140px;">
+    <button class="btn btn-outline-secondary btn-sm">Show</button>
+    {% if showing_history or history_error %}<a href="/payments" class="btn btn-link btn-sm">Clear</a>{% endif %}
+  </form>
+</div>
+{% if history_error %}<div class="alert alert-warning py-1">{{ history_error }}</div>{% endif %}
+<div class="card p-3">
+  <table class="table table-hover align-middle mb-0">
+    <thead><tr><th>Batch</th><th>Pay date</th><th>Status</th><th class="text-end">Payments</th><th class="text-end">Confirmed</th><th class="text-end">Total</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr onclick="window.location='/payments/batch/{{ r.b.id }}'" style="cursor:pointer;">
+        <td>{{ r.b.batch_no }}{% if r.b.title %} <span class="text-muted small">{{ r.b.title }}</span>{% endif %}</td>
+        <td>{{ r.b.pay_date.strftime('%d-%b-%Y') }}</td>
+        <td><span class="badge bg-{{ {'Open':'primary','Downloaded':'warning text-dark','Confirmed':'success','Cancelled':'secondary'}[r.b.status] }}">{{ r.b.status }}</span></td>
+        <td class="text-end">{{ r.n }}</td>
+        <td class="text-end">{{ r.confirmed }}</td>
+        <td class="text-end">{{ r.total|inr }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="6" class="text-muted text-center">No batches {{ 'in these dates' if showing_history else 'in progress' }}.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit' if payee else 'New' }} Payee{% endblock %}
+{% block content %}
+<h4 class="mb-3">{{ 'Edit' if payee else 'New' }} Payee</h4>
+<div class="card p-4" style="max-width:640px;">
+  <form method="post" action="{{ '/payments/payees/%d/edit' % payee.id if payee else '/payments/payees/add' }}">
+    <div class="row">
+      <div class="col-md-8 mb-3"><label class="form-label">Name *</label><input name="name" class="form-control" value="{{ payee.name if payee else '' }}" required></div>
+      <div class="col-md-4 mb-3"><label class="form-label">Short name</label><input name="nickname" class="form-control" value="{{ (payee.nickname or '') if payee else '' }}"></div>
+    </div>
+    <div class="row">
+      <div class="col-md-6 mb-3"><label class="form-label">Category</label>
+        <select name="category" class="form-select">{% for c in categories %}<option {{ 'selected' if payee and payee.category == c }}>{{ c }}</option>{% endfor %}</select></div>
+      <div class="col-md-6 mb-3"><label class="form-label">Default remark</label><input name="default_remark" class="form-control" value="{{ (payee.default_remark or '') if payee else '' }}"></div>
+    </div>
+    <div class="fw-semibold mt-2">Bank details {% if not is_admin %}<span class="badge bg-secondary">admin only</span>{% endif %}</div>
+    <div class="row mt-2">
+      <div class="col-md-4 mb-3"><label class="form-label">Bank name</label><input name="bank_name" class="form-control" value="{{ (payee.bank_name or '') if payee else '' }}" {{ '' if is_admin else 'readonly' }}></div>
+      <div class="col-md-4 mb-3"><label class="form-label">Account number</label><input name="account_no" class="form-control" value="{{ (payee.account_no or '') if payee else '' }}" {{ '' if is_admin else 'readonly' }}></div>
+      <div class="col-md-4 mb-3"><label class="form-label">IFSC</label><input name="ifsc" class="form-control" value="{{ (payee.ifsc or '') if payee else '' }}" {{ '' if is_admin else 'readonly' }}></div>
+    </div>
+    <div class="row">
+      <div class="col-md-6 mb-3"><label class="form-label">Mobile</label><input name="mobile" class="form-control" value="{{ (payee.mobile or '') if payee else '' }}"></div>
+      <div class="col-md-6 mb-3"><label class="form-label">Email</label><input name="email" class="form-control" value="{{ (payee.email or '') if payee else '' }}"></div>
+    </div>
+    <div class="form-check mb-3"><input class="form-check-input" type="checkbox" name="is_active" id="act" {{ 'checked' if (not payee or payee.is_active) }}><label class="form-check-label" for="act">Active</label></div>
+    <button class="btn btn-dark">Save</button> <a href="/payments/payees" class="btn btn-link">Cancel</a>
+  </form>
+</div>
+{% endblock %}

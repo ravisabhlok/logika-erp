@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit' if e else 'New' }} Expense{% endblock %}
+{% block content %}
+<h4 class="mb-3">{{ 'Edit' if e else 'New' }} Expense</h4>
+<div class="card p-4" style="max-width:640px;">
+  <form method="post" action="{{ '/expenses/%d/edit' % e.id if e else '/expenses/add' }}">
+    <div class="mb-3"><label class="form-label">Pay to *</label>
+      <select name="payee_id" class="form-select" required>
+        <option value="">- choose a payee -</option>
+        {% for p in payees %}<option value="{{ p.id }}" {{ 'selected' if e and e.payee_id == p.id }}>{{ p.name }} ({{ p.category }}){{ '' if p.account_no else ' - no bank details' }}</option>{% endfor %}
+      </select>
+      <div class="form-text">Not in the list? <a href="/payments/payees/add">Add a payee</a>. Vendors are paid from their Bill.</div></div>
+    <div class="row">
+      <div class="col-md-6 mb-3"><label class="form-label">Category</label>
+        <select name="category" class="form-select">{% for c in categories %}<option {{ 'selected' if e and e.category == c }}>{{ c }}</option>{% endfor %}</select></div>
+      <div class="col-md-6 mb-3"><label class="form-label">Amount *</label><input type="number" step="0.01" min="0.01" name="amount" class="form-control" value="{{ e.amount if e else '' }}" required></div>
+    </div>
+    <div class="mb-3"><label class="form-label">Description</label><input name="description" class="form-control" value="{{ (e.description or '') if e else '' }}"></div>
+    <div class="row">
+      <div class="col-md-6 mb-3"><label class="form-label">Due date *</label><input type="date" name="due_date" class="form-control" value="{{ (e.due_date if e else today).strftime('%Y-%m-%d') }}" required></div>
+      <div class="col-md-6 mb-3"><label class="form-label">Bill / invoice no</label><input name="bill_no" class="form-control" value="{{ (e.bill_no or '') if e else '' }}"></div>
+    </div>
+    {% if not e %}
+    <div class="form-check mb-1"><input class="form-check-input" type="checkbox" name="recurring" id="rec"><label class="form-check-label" for="rec">Repeat every month</label></div>
+    <div class="mb-3 ms-4" style="max-width:220px;"><label class="form-label small">on day of month (1-28)</label><input type="number" min="1" max="28" name="recur_day" class="form-control form-control-sm" placeholder="same as due date"></div>
+    {% endif %}
+    <button class="btn btn-dark">Save</button> <a href="/expenses" class="btn btn-link">Cancel</a>
+  </form>
+</div>
+{% endblock %}

@@ -15,6 +15,8 @@ import os
 import re
 import uuid
 from datetime import datetime
+from decimal import Decimal
+from urllib.parse import quote
 
 from fastapi import APIRouter, Request, Depends, Query
 from fastapi.responses import RedirectResponse
@@ -29,6 +31,7 @@ from app.models import (
     Item, ItemSerial, StockTransaction, User,
 )
 from app.audit import log_action
+from app.payments_service import BADGE, STATUS_TEXT, bill_summary, mask, queue_bill
 
 router = APIRouter(prefix="/bills", tags=["bills"])
 templates = Jinja2Templates(directory="app/templates")
@@ -475,10 +478,37 @@ def bill_detail(bill_id: int, request: Request, db: Session = Depends(get_db), u
     if not bill:
         return RedirectResponse(url="/bills?error=Bill not found", status_code=303)
     perms = get_user_module_permissions(user, db, "bills")
+    bank = bill_summary(db, bill)
     return templates.TemplateResponse(
         "bills/detail.html",
-        {"request": request, "user": user, "bill": bill, "perms": perms, "today": datetime.utcnow().strftime("%Y-%m-%d")},
+        {"request": request, "user": user, "bill": bill, "perms": perms, "today": datetime.utcnow().strftime("%Y-%m-%d"),
+         "bank": bank, "bank_badge": BADGE, "bank_status_text": STATUS_TEXT, "mask": mask,
+         "send_balance": max(bank["balance"], 0)},
     )
+
+
+@router.post("/{bill_id}/send-payment")
+async def send_for_bank_payment(
+    bill_id: int, request: Request,
+    db: Session = Depends(get_db), user: User = Depends(require_module_permission("bills", "edit")),
+):
+    """Put (part of) this bill's unpaid balance on the Bank Payments queue. The payment is recorded against the
+    bill (BillPayment) only once the bank's confirmation is loaded — see app/payments_service.py."""
+    bill = db.query(Bill).options(joinedload(Bill.vendor), joinedload(Bill.payments)).get(bill_id)
+    if not bill:
+        return RedirectResponse(url="/bills?error=Bill not found", status_code=303)
+    form = await request.form()
+    try:
+        pay_date = _parse_date(form.get("pay_date", ""))
+        if pay_date is None:
+            raise ValueError("Choose the pay date")
+        amount = Decimal(str(form.get("amount", "")).replace(",", "").strip() or "0").quantize(Decimal("0.01"))
+        queue_bill(db, user, bill, amount, pay_date.date())
+    except (ValueError, ArithmeticError) as ex:
+        msg = str(ex) if isinstance(ex, ValueError) else "Enter a valid amount"
+        return RedirectResponse(url=f"/bills/{bill_id}?error={quote(msg)}", status_code=303)
+    db.commit()
+    return RedirectResponse(url=f"/bills/{bill_id}?success={quote('Sent for bank payment. It now waits on the Bank Payments page.')}", status_code=303)
 
 
 @router.post("/{bill_id}/payments")
@@ -529,6 +559,8 @@ def delete_payment(bill_id: int, payment_id: int, db: Session = Depends(get_db),
     payment = next((p for p in bill.payments if p.id == payment_id), None)
     if not payment:
         return RedirectResponse(url=f"/bills/{bill_id}?error=Payment not found", status_code=303)
+    if payment.payment_line_id:
+        return RedirectResponse(url=f"/bills/{bill_id}?error=This payment was confirmed by the bank and cannot be removed", status_code=303)
     db.delete(payment)
     db.flush()
     bill.payments = [p for p in bill.payments if p.id != payment_id]
