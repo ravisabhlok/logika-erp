@@ -156,12 +156,13 @@ DOWNLOADABLE_PURCHASE_STATUSES in app/routers/purchase.py).
 
 <table class="totals">
   {% if order.currency == 'INR' or order.freight_amount %}
-  <tr><td class="t-label">Sub Total</td><td class="t-value">{{ (order.total_amount - (order.freight_amount or 0))|money(order.currency) }}</td></tr>
+  <tr><td class="t-label">Sub Total</td><td class="t-value">{{ (order.total_amount - (order.freight_amount or 0) - (order.round_off_amount or 0))|money(order.currency) }}</td></tr>
   {% if order.freight_amount %}<tr><td class="t-label">Freight</td><td class="t-value">{{ order.freight_amount|money(order.currency) }}</td></tr>{% endif %}
   {% endif %}
   {% if order.currency == 'INR' %}
   <tr><td class="t-label">GST</td><td class="t-value">{{ (order.gst_amount or 0)|money(order.currency) }}</td></tr>
   {% endif %}
+  {% if order.round_off_amount %}<tr><td class="t-label">Round off</td><td class="t-value">{{ order.round_off_amount|money(order.currency) }}</td></tr>{% endif %}
   <tr class="grand"><td>Order Total{% if order.currency == 'INR' %} (incl. GST){% endif %}</td><td class="t-value">{{ (order.total_amount + (order.gst_amount or 0))|money(order.currency) }}</td></tr>
 </table>
 

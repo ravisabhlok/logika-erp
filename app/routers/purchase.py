@@ -19,7 +19,7 @@ from xhtml2pdf import pisa
 
 from app.database import get_db
 from app.auth import require_module_permission, get_user_module_permissions, require_admin
-from app.formatting import format_qty, format_inr, format_money, format_dt, IST_OFFSET, CURRENCY_SYMBOLS, FREIGHT_GST_PERCENT, parse_freight as _parse_freight
+from app.formatting import format_qty, format_inr, format_money, format_dt, IST_OFFSET, CURRENCY_SYMBOLS, FREIGHT_GST_PERCENT, parse_freight as _parse_freight, parse_round_off as _parse_round_off, order_totals
 from app.models import (
     PurchaseOrder, PurchaseOrderItem, Vendor, Item, StockTransaction, ItemSerial, User, Company,
 )
@@ -264,9 +264,10 @@ async def create_purchase_order(request: Request, db: Session = Depends(get_db),
         ))
 
     freight = _parse_freight(form.get("freight_amount"))
+    round_off = _parse_round_off(form.get("round_off_amount"))
     order.freight_amount = freight
-    order.total_amount = total + freight
-    order.gst_amount = (gst_total + freight * FREIGHT_GST_PERCENT / 100) if currency == "INR" else 0
+    order.total_amount, order.gst_amount, order.round_off_amount = order_totals(
+        total, (gst_total + freight * FREIGHT_GST_PERCENT / 100) if currency == "INR" else 0, freight, round_off)
     db.flush()  # need order.id before logging
     log_action(
         db, user, "purchase_order", order.id, order.order_no, "create",
@@ -409,7 +410,7 @@ def edit_purchase_form(order_id: int, request: Request, db: Session = Depends(ge
     submitted = {
         "vendor_id": order.vendor_id,
         "notes": order.notes or "",
-        "freight_amount": float(order.freight_amount or 0) or "",
+        "freight_amount": float(order.freight_amount or 0) or "", "round_off_amount": float(order.round_off_amount or 0) or "",
         "zoho_po_no": order.zoho_po_no or "",
         "currency": order.currency,
         "exchange_rate": float(order.exchange_rate),
@@ -496,9 +497,10 @@ async def update_purchase_order(order_id: int, request: Request, db: Session = D
     freight = _parse_freight(form.get("freight_amount"))
     if float(order.freight_amount or 0) != freight:
         changes["freight_amount"] = (order.freight_amount, freight)
+    round_off = _parse_round_off(form.get("round_off_amount"))
     order.freight_amount = freight
-    order.total_amount = total + freight
-    order.gst_amount = (gst_total + freight * FREIGHT_GST_PERCENT / 100) if currency == "INR" else 0
+    order.total_amount, order.gst_amount, order.round_off_amount = order_totals(
+        total, (gst_total + freight * FREIGHT_GST_PERCENT / 100) if currency == "INR" else 0, freight, round_off)
     if len(order.items) != old_line_count or order.total_amount != old_total:
         changes["line_items"] = (
             f"{old_line_count} line(s), total {old_total}",

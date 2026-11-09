@@ -306,6 +306,9 @@ class SalesOrder(Base):
     # gst_amount, so every "total_amount + gst_amount" total stays right;
     # kept separately only so it can be shown and edited as its own row.
     freight_amount = Column(Numeric(14, 2), default=0, server_default="0", nullable=False)
+    # Optional manual round-off typed in by the user (can be negative; 0 = none,
+    # never auto-calculated). Already INCLUDED in total_amount, like freight_amount.
+    round_off_amount = Column(Numeric(14, 2), default=0, server_default="0", nullable=False)
     notes = Column(Text)
     # The customer's own PO reference (their paperwork, not ours) — free text
     # since formats vary wildly by customer, plus the date on their PO,
@@ -629,6 +632,9 @@ class PurchaseOrder(Base):
     # Freight before GST; already included in total_amount, and its 18% GST
     # (INR orders only) in gst_amount. See SalesOrder.freight_amount.
     freight_amount = Column(Numeric(14, 2), default=0, server_default="0", nullable=False)
+    # Optional manual round-off typed in by the user (can be negative; 0 = none,
+    # never auto-calculated). Already INCLUDED in total_amount, like freight_amount.
+    round_off_amount = Column(Numeric(14, 2), default=0, server_default="0", nullable=False)
     notes = Column(Text)
     # Free-text reference to the matching PO number(s) in Zoho (comma-separated
     # if several). Informational only.

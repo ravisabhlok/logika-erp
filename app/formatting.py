@@ -153,3 +153,21 @@ def parse_freight(value) -> float:
     except (TypeError, ValueError):
         return 0.0
     return round(amount, 2) if amount > 0 else 0.0
+
+
+def parse_round_off(value) -> float:
+    """Manual round-off from a form field (may be negative); blank/invalid -> 0."""
+    try:
+        return round(float(value or 0), 2)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def order_totals(lines_total, lines_gst, freight, round_off):
+    """(total_amount, gst_amount, round_off) for a sales/purchase order.
+
+    total_amount includes freight and the manually-entered round_off (can be
+    negative); gst_amount is left untouched by the round-off.
+    """
+    round_off = round(round_off, 2)
+    return round(lines_total + freight + round_off, 2), round(lines_gst, 2), round_off

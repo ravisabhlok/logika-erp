@@ -94,10 +94,16 @@
       <input type="number" name="freight_amount" id="freightInput" class="form-control" step="0.01" min="0" value="{{ submitted.freight_amount if submitted.freight_amount not in (None, '') else '' }}" oninput="recalcTotal()">
     </div>
 
+    <div class="mb-3" style="max-width: 260px;">
+      <label class="form-label">Round off <span class="text-muted small">(optional, enter manually; negative to reduce)</span></label>
+      <input type="number" name="round_off_amount" id="roundOffInput" class="form-control" step="0.01" value="{{ submitted.round_off_amount if submitted.round_off_amount not in (None, '') else '' }}" oninput="recalcTotal()">
+    </div>
+
     <div class="mb-3">
       <div>Subtotal: <span id="orderSubtotal">0.00</span></div>
       <div>Freight: <span id="orderFreight">0.00</span></div>
       <div>GST: <span id="orderGst">0.00</span></div>
+      <div id="roundOffRow" style="display:none">Round off: <span id="orderRoundOff">0.00</span></div>
       <div class="fw-bold">Invoice Value: <span id="orderGrandTotal">0.00</span></div>
     </div>
 
@@ -375,7 +381,11 @@ function recalcTotal() {
   document.getElementById('orderSubtotal').textContent = formatINR(subtotal);
   document.getElementById('orderFreight').textContent = formatINR(freight);
   document.getElementById('orderGst').textContent = formatINR(gstTotal);
-  document.getElementById('orderGrandTotal').textContent = formatINR(subtotal + freight + gstTotal);
+  const roundOff = parseFloat(document.getElementById('roundOffInput').value) || 0;
+  const grand = subtotal + freight + gstTotal + roundOff;
+  document.getElementById('roundOffRow').style.display = roundOff ? '' : 'none';
+  document.getElementById('orderRoundOff').textContent = formatINR(roundOff);
+  document.getElementById('orderGrandTotal').textContent = formatINR(grand);
 }
 
 if (submittedLines.length) {

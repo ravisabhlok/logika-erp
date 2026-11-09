@@ -49,10 +49,16 @@
       <input type="number" name="freight_amount" id="freightInput" class="form-control" step="0.01" min="0" value="{{ submitted.freight_amount if submitted.freight_amount not in (None, '') else '' }}" oninput="recalcTotal()">
     </div>
 
+    <div class="mb-3" style="max-width: 260px;">
+      <label class="form-label">Round off <span class="text-muted small">(optional, enter manually; negative to reduce)</span></label>
+      <input type="number" name="round_off_amount" id="roundOffInput" class="form-control" step="0.01" value="{{ submitted.round_off_amount if submitted.round_off_amount not in (None, '') else '' }}" oninput="recalcTotal()">
+    </div>
+
     <div class="mb-3">
       <div>Subtotal: <span id="orderTotal">0.00</span></div>
       <div>Freight: <span id="orderFreight">0.00</span></div>
       <div>GST: <span id="orderGst">0.00</span> <span class="text-muted small">(from each item's GST %, INR orders only)</span></div>
+      <div id="roundOffRow" style="display:none">Round off: <span id="orderRoundOff">0.00</span></div>
       <div class="fw-bold">Total incl. GST: <span id="orderGrandTotal">0.00</span></div>
     </div>
 
@@ -260,7 +266,11 @@ function recalcTotal() {
   document.getElementById('orderTotal').textContent = formatMoney(total, currency);
   document.getElementById('orderFreight').textContent = formatMoney(freight, currency);
   document.getElementById('orderGst').textContent = formatMoney(gst, currency);
-  document.getElementById('orderGrandTotal').textContent = formatMoney(total + freight + gst, currency);
+  const roundOff = parseFloat(document.getElementById('roundOffInput').value) || 0;
+  const grand = total + freight + gst + roundOff;
+  document.getElementById('roundOffRow').style.display = roundOff ? '' : 'none';
+  document.getElementById('orderRoundOff').textContent = formatMoney(roundOff, currency);
+  document.getElementById('orderGrandTotal').textContent = formatMoney(grand, currency);
 }
 
 if (submittedLines.length) {
