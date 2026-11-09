@@ -613,6 +613,9 @@ class PurchaseOrder(Base):
     exchange_rate = Column(Numeric(10, 4), default=1, nullable=False)
     total_amount = Column(Numeric(14, 2), default=0)
     notes = Column(Text)
+    # Free-text reference to the matching PO number(s) in Zoho (comma-separated
+    # if several). Informational only.
+    zoho_po_no = Column(String(255), nullable=True)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     # Set together by approve_purchase_order the moment an admin approves —

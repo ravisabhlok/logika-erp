@@ -215,6 +215,7 @@ async def create_purchase_order(request: Request, db: Session = Depends(get_db),
     form = await request.form()
     vendor_id = int(form.get("vendor_id"))
     notes = form.get("notes", "")
+    zoho_po_no = (form.get("zoho_po_no") or "").strip()[:255] or None
     item_ids = form.getlist("item_id")
     quantities = form.getlist("quantity")
     prices = form.getlist("unit_price")
@@ -231,6 +232,7 @@ async def create_purchase_order(request: Request, db: Session = Depends(get_db),
         order_no=next_order_no(db),
         vendor_id=vendor_id,
         notes=notes,
+        zoho_po_no=zoho_po_no,
         created_by=user.id,
         status="draft",
         currency=currency,
@@ -402,6 +404,7 @@ def edit_purchase_form(order_id: int, request: Request, db: Session = Depends(ge
     submitted = {
         "vendor_id": order.vendor_id,
         "notes": order.notes or "",
+        "zoho_po_no": order.zoho_po_no or "",
         "currency": order.currency,
         "exchange_rate": float(order.exchange_rate),
         "lines": [
@@ -436,6 +439,7 @@ async def update_purchase_order(order_id: int, request: Request, db: Session = D
     form = await request.form()
     vendor_id = int(form.get("vendor_id"))
     notes = form.get("notes", "")
+    zoho_po_no = (form.get("zoho_po_no") or "").strip()[:255] or None
     item_ids = form.getlist("item_id")
     quantities = form.getlist("quantity")
     prices = form.getlist("unit_price")
@@ -451,6 +455,7 @@ async def update_purchase_order(order_id: int, request: Request, db: Session = D
     changes = diff_fields(order, {
         "vendor_id": vendor_id,
         "notes": notes,
+        "zoho_po_no": zoho_po_no,
         "currency": currency,
         "exchange_rate": exchange_rate,
     })
@@ -459,6 +464,7 @@ async def update_purchase_order(order_id: int, request: Request, db: Session = D
 
     order.vendor_id = vendor_id
     order.notes = notes
+    order.zoho_po_no = zoho_po_no
     order.currency = currency
     order.exchange_rate = exchange_rate
     order.items = []  # cascade="all, delete-orphan" removes the old lines on flush

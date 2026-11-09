@@ -27,6 +27,10 @@
       <div>{{ order.vendor.name }}</div>
       <div class="text-muted small mt-2">Order Date</div>
       <div>{{ order.order_date|dt('%d-%b-%Y') }}</div>
+      {% if order.zoho_po_no %}
+      <div class="text-muted small mt-2">Zoho PO No(s).</div>
+      <div>{{ order.zoho_po_no }}</div>
+      {% endif %}
       {% if order.currency != 'INR' %}
       <div class="text-muted small mt-2">Currency</div>
       <div>{{ order.currency }} <span class="text-muted small">(ref. rate {{ order.exchange_rate }} / INR)</span></div>

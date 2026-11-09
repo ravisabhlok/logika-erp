@@ -33,6 +33,13 @@
     <button type="button" class="btn btn-outline-secondary btn-sm mb-3" onclick="addRow()">+ Add Line</button>
 
     <div class="mb-3">
+      <label class="form-label">Zoho PO No(s).</label>
+      <input type="text" name="zoho_po_no" class="form-control" maxlength="255"
+             value="{{ submitted.zoho_po_no or '' }}" placeholder="e.g. PO-00123, PO-00124">
+      <div class="form-text">Separate multiple numbers with commas.</div>
+    </div>
+
+    <div class="mb-3">
       <label class="form-label">Notes</label>
       <textarea name="notes" class="form-control" rows="2">{{ submitted.notes or '' }}</textarea>
     </div>
