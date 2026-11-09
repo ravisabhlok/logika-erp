@@ -634,6 +634,7 @@ def reject_purchase_order(
 @router.post("/{order_id}/confirm")
 def confirm_purchase_order(
     order_id: int,
+    zoho_po_no: str = Form(""),
     db: Session = Depends(get_db),
     user: User = Depends(require_module_permission("purchase", "confirm")),
 ):
@@ -651,12 +652,19 @@ def confirm_purchase_order(
             url=f"/purchase/{order_id}?error=Only an order pending confirmation can be confirmed",
             status_code=303,
         )
+    zoho_po_no = zoho_po_no.strip()[:255]
+    if not zoho_po_no:
+        return RedirectResponse(
+            url=f"/purchase/{order_id}?error=Enter the Zoho PO number before confirming",
+            status_code=303,
+        )
+    order.zoho_po_no = zoho_po_no
     order.status = "ordered"
     order.confirmed_by = user.id
     order.confirmed_at = datetime.utcnow()
     log_action(
         db, user, "purchase_order", order.id, order.order_no, "confirm",
-        summary=f"Confirmed by {user.username} — pending_confirmation -> ordered",
+        summary=f"Confirmed by {user.username} — pending_confirmation -> ordered (Zoho PO {zoho_po_no})",
     )
     db.commit()
     return RedirectResponse(url=f"/purchase/{order_id}?success=Purchase order confirmed", status_code=303)

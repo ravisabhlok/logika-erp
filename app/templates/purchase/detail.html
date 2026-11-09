@@ -86,7 +86,9 @@
           <span class="badge bg-warning text-dark">Awaiting confirmation</span>
         </div>
         {% if perms.confirm %}
-        <form method="post" action="/purchase/{{ order.id }}/confirm" class="d-inline">
+        <form method="post" action="/purchase/{{ order.id }}/confirm" class="d-inline-flex align-items-center gap-2">
+          <input type="text" name="zoho_po_no" class="form-control form-control-sm" style="width:200px;"
+                 maxlength="255" required placeholder="Zoho PO No(s). *" value="{{ order.zoho_po_no or '' }}">
           <button class="btn btn-success btn-sm">Confirm</button>
         </form>
         <form method="post" action="/purchase/{{ order.id }}/reject-confirmation" class="d-inline">
