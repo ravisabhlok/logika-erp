@@ -202,7 +202,8 @@ flat table with a spacer <td> for the gutter, not nested tables.
 </table>
 
 <table class="totals">
-  <tr><td class="t-label">Sub Total</td><td class="t-value">{{ order.total_amount|inr }}</td></tr>
+  <tr><td class="t-label">Sub Total</td><td class="t-value">{{ (order.total_amount - (order.freight_amount or 0))|inr }}</td></tr>
+  {% if order.freight_amount %}<tr><td class="t-label">Freight</td><td class="t-value">{{ order.freight_amount|inr }}</td></tr>{% endif %}
   <tr><td class="t-label">GST</td><td class="t-value">{{ (order.gst_amount or 0)|inr }}</td></tr>
   <tr class="grand"><td>Total</td><td class="t-value">{{ (order.total_amount + (order.gst_amount or 0))|inr }}</td></tr>
 </table>

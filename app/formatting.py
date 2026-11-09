@@ -140,3 +140,16 @@ def format_money(value, currency: str = "INR") -> str:
     negative = d < 0
     d = abs(d).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     return ("-" if negative else "") + symbol + format(d, ",.2f")
+
+
+# Freight on Sales/Purchase orders is always taxed at this flat GST rate.
+FREIGHT_GST_PERCENT = 18
+
+
+def parse_freight(value) -> float:
+    """Freight amount from a form field: blank/invalid/negative -> 0."""
+    try:
+        amount = float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    return round(amount, 2) if amount > 0 else 0.0

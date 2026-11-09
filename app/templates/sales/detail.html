@@ -107,7 +107,8 @@
     {% endfor %}
     </tbody>
     <tfoot>
-      <tr><th colspan="3" class="text-end">Subtotal</th><th class="text-end">{{ order.total_amount|inr }}</th></tr>
+      <tr><th colspan="3" class="text-end">Subtotal</th><th class="text-end">{{ (order.total_amount - (order.freight_amount or 0))|inr }}</th></tr>
+      {% if order.freight_amount %}<tr><th colspan="3" class="text-end">Freight</th><th class="text-end">{{ order.freight_amount|inr }}</th></tr>{% endif %}
       <tr><th colspan="3" class="text-end">GST</th><th class="text-end">{{ (order.gst_amount or 0)|inr }}</th></tr>
       <tr><th colspan="3" class="text-end">Invoice Value</th><th class="text-end">{{ (order.total_amount + (order.gst_amount or 0))|inr }}</th></tr>
     </tfoot>

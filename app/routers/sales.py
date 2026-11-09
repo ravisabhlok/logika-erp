@@ -12,7 +12,7 @@ from xhtml2pdf import pisa
 
 from app.database import get_db
 from app.auth import require_login, require_module_permission, get_user_module_permissions
-from app.formatting import format_qty, format_inr, format_dt
+from app.formatting import format_qty, format_inr, format_dt, FREIGHT_GST_PERCENT, parse_freight as _parse_freight
 from app.models import SalesOrder, SalesOrderItem, SalesOrderPaymentTerm, Customer, Item, StockTransaction, User, Company
 from app.audit import diff_fields, log_field_changes, log_action
 
@@ -171,6 +171,7 @@ async def create_sales_order(request: Request, db: Session = Depends(get_db), us
         items = db.query(Item).filter(Item.is_active == True).order_by(Item.name).all()  # noqa: E712
         submitted = {
             "customer_id": customer_id, "order_no": order_no, "notes": notes,
+            "freight_amount": form.get("freight_amount", ""),
             "customer_po_no": customer_po_no, "customer_po_date": customer_po_date,
             "expected_shipment_date": expected_shipment_date,
             "billing_address": billing_address, "shipping_address": shipping_address,
@@ -230,8 +231,10 @@ async def create_sales_order(request: Request, db: Session = Depends(get_db), us
             item_id=item.id, quantity=qty, unit_price=unit_price, total=line_total,
         ))
 
-    order.total_amount = total
-    order.gst_amount = gst_total
+    freight = _parse_freight(form.get("freight_amount"))
+    order.freight_amount = freight
+    order.total_amount = total + freight
+    order.gst_amount = gst_total + freight * FREIGHT_GST_PERCENT / 100
     db.flush()  # need order.id before logging
     log_action(
         db, user, "sales_order", order.id, order.order_no, "create",
@@ -450,6 +453,7 @@ def edit_sales_form(order_id: int, request: Request, db: Session = Depends(get_d
         "customer_id": order.customer_id,
         "order_no": order.order_no,
         "notes": order.notes or "",
+        "freight_amount": float(order.freight_amount or 0) or "",
         "customer_po_no": order.customer_po_no or "",
         "customer_po_date": order.customer_po_date.strftime("%Y-%m-%d") if order.customer_po_date else "",
         "expected_shipment_date": order.expected_shipment_date.strftime("%Y-%m-%d") if order.expected_shipment_date else "",
@@ -502,6 +506,7 @@ async def update_sales_order(order_id: int, request: Request, db: Session = Depe
         )
         submitted = {
             "customer_id": customer_id, "order_no": order_no, "notes": notes,
+            "freight_amount": form.get("freight_amount", ""),
             "customer_po_no": customer_po_no, "customer_po_date": customer_po_date,
             "expected_shipment_date": expected_shipment_date,
             "billing_address": billing_address, "shipping_address": shipping_address,
@@ -568,8 +573,12 @@ async def update_sales_order(order_id: int, request: Request, db: Session = Depe
             item_id=item.id, quantity=qty, unit_price=unit_price, total=line_total,
         ))
 
-    order.total_amount = total
-    order.gst_amount = gst_total
+    freight = _parse_freight(form.get("freight_amount"))
+    if float(order.freight_amount or 0) != freight:
+        changes["freight_amount"] = (order.freight_amount, freight)
+    order.freight_amount = freight
+    order.total_amount = total + freight
+    order.gst_amount = gst_total + freight * FREIGHT_GST_PERCENT / 100
     if len(order.items) != old_line_count or order.total_amount != old_total:
         changes["line_items"] = (
             f"{old_line_count} line(s), total {old_total}",

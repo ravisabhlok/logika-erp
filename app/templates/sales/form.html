@@ -89,8 +89,14 @@
       <textarea name="notes" class="form-control" rows="2">{{ submitted.notes or '' }}</textarea>
     </div>
 
+    <div class="mb-3" style="max-width: 260px;">
+      <label class="form-label">Freight <span class="text-muted small">(before GST; 18% GST added)</span></label>
+      <input type="number" name="freight_amount" id="freightInput" class="form-control" step="0.01" min="0" value="{{ submitted.freight_amount if submitted.freight_amount not in (None, '') else '' }}" oninput="recalcTotal()">
+    </div>
+
     <div class="mb-3">
       <div>Subtotal: <span id="orderSubtotal">0.00</span></div>
+      <div>Freight: <span id="orderFreight">0.00</span></div>
       <div>GST: <span id="orderGst">0.00</span></div>
       <div class="fw-bold">Invoice Value: <span id="orderGrandTotal">0.00</span></div>
     </div>
@@ -364,9 +370,12 @@ function recalcTotal() {
     const item = items.find(i => i.id == itemId);
     if (item) gstTotal += lineTotal * item.gst / 100;
   });
+  const freight = Math.max(parseFloat(document.getElementById('freightInput').value) || 0, 0);
+  gstTotal += freight * 18 / 100;  // freight is always taxed at a flat 18%
   document.getElementById('orderSubtotal').textContent = formatINR(subtotal);
+  document.getElementById('orderFreight').textContent = formatINR(freight);
   document.getElementById('orderGst').textContent = formatINR(gstTotal);
-  document.getElementById('orderGrandTotal').textContent = formatINR(subtotal + gstTotal);
+  document.getElementById('orderGrandTotal').textContent = formatINR(subtotal + freight + gstTotal);
 }
 
 if (submittedLines.length) {
