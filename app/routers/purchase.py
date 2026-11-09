@@ -570,6 +570,62 @@ def send_purchase_order_for_approval(
     return RedirectResponse(url=f"/purchase/{order_id}?success=Sent for approval", status_code=303)
 
 
+@router.post("/{order_id}/set-stage")
+def set_purchase_order_stage(
+    order_id: int,
+    new_status: str = Form(...),
+    zoho_po_no: str = Form(""),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    """Admin override: move a PO freely between draft / pending_approval /
+    pending_confirmation (Approved) / ordered (Confirmed), in either direction.
+    Only allowed while nothing has been received. Approval/confirmation
+    stamps are set or cleared to match the new stage; moving to 'ordered'
+    still requires a Zoho PO number."""
+    stages = ("draft", "pending_approval", "pending_confirmation", "ordered")
+    order = db.query(PurchaseOrder).options(joinedload(PurchaseOrder.items)).get(order_id)
+    if not order:
+        return RedirectResponse(url="/purchase?error=Purchase order not found", status_code=303)
+    if order.status not in stages[1:] or new_status not in stages:
+        return RedirectResponse(url=f"/purchase/{order_id}?error=Stage can't be changed from here", status_code=303)
+    if any(line.received_quantity and line.received_quantity > 0 for line in order.items):
+        return RedirectResponse(url=f"/purchase/{order_id}?error=Stage can't be changed after goods have been received", status_code=303)
+    if new_status == order.status:
+        return RedirectResponse(url=f"/purchase/{order_id}", status_code=303)
+
+    zoho_po_no = zoho_po_no.strip()[:255]
+    if new_status == "ordered":
+        if not zoho_po_no:
+            return RedirectResponse(url=f"/purchase/{order_id}?error=Enter the Zoho PO number to mark it Confirmed", status_code=303)
+        order.zoho_po_no = zoho_po_no
+
+    now = datetime.utcnow()
+    idx = stages.index(new_status)
+    if idx >= 2:  # approved or beyond
+        if not order.approved_by:
+            order.approved_by = user.id
+            order.approved_at = now
+    else:
+        order.approved_by = None
+        order.approved_at = None
+    if new_status == "ordered":
+        order.confirmed_by = user.id
+        order.confirmed_at = now
+    else:
+        order.confirmed_by = None
+        order.confirmed_at = None
+
+    old_status = order.status
+    order.status = new_status
+    log_action(
+        db, user, "purchase_order", order.id, order.order_no, "status_change",
+        summary=f"Stage changed by admin {user.username}: {old_status} -> {new_status}",
+    )
+    db.commit()
+    return RedirectResponse(url=f"/purchase/{order_id}?success=Stage changed to {new_status.replace('_', ' ')}", status_code=303)
+
+
 @router.post("/{order_id}/approve")
 def approve_purchase_order(
     order_id: int,

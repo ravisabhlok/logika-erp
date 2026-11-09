@@ -132,6 +132,21 @@
       {% else %}
       <span class="text-muted">No further actions.</span>
       {% endif %}
+      {% if user.role == 'admin' and order.status in ('pending_approval', 'pending_confirmation', 'ordered') %}
+      <hr class="my-2">
+      <form method="post" action="/purchase/{{ order.id }}/set-stage" class="d-flex flex-wrap align-items-center gap-2"
+            onsubmit="return confirm('Change the stage of {{ order.order_no }}?');">
+        <span class="small text-muted">Admin: change stage</span>
+        <select name="new_status" class="form-select form-select-sm" style="width:190px;">
+          {% for s, label in [('draft','Draft'),('pending_approval','Pending approval'),('pending_confirmation','Approved (pending confirmation)'),('ordered','Confirmed (ordered)')] %}
+          <option value="{{ s }}" {% if s == order.status %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+        <input type="text" name="zoho_po_no" class="form-control form-control-sm" style="width:180px;"
+               maxlength="255" placeholder="Zoho PO No(s). (to confirm)" value="{{ order.zoho_po_no or '' }}">
+        <button class="btn btn-outline-dark btn-sm">Change</button>
+      </form>
+      {% endif %}
       {% if order.short_closed_at %}
       <div class="alert alert-warning py-2 px-3 mt-2 mb-0 small">
         <strong>Short closed</strong> on {{ order.short_closed_at|dt('%d-%b-%Y') }}
