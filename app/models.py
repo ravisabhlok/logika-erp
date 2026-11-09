@@ -10,6 +10,7 @@ from sqlalchemy import (
     Column, Integer, String, Text, DateTime, Numeric, ForeignKey,
     Boolean, Enum, UniqueConstraint, Table, Date, LargeBinary,
 )
+from sqlalchemy.sql.expression import true as sa_true
 from sqlalchemy.orm import relationship
 
 from app.database import Base
@@ -211,6 +212,11 @@ class Item(Base):
     current_stock = Column(Numeric(14, 4), default=0, nullable=False)
     has_serial = Column(Boolean, default=False, nullable=False)
     is_assembly = Column(Boolean, default=False, nullable=False)
+    # False for things that are bought/sold but never held in stock (services,
+    # consumed-on-site goods, etc.): no stock check or movement on any
+    # receipt/delivery/invoice/production, and excluded from the Inventory
+    # page, low-stock alerts and "What to Order".
+    track_inventory = Column(Boolean, default=True, server_default=sa_true(), nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 

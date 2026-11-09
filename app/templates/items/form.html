@@ -76,6 +76,12 @@
       {% endif %}
     </div>
     <div class="mb-3 form-check">
+      <input type="checkbox" name="track_inventory" class="form-check-input" id="track_inventory" value="true"
+             {% if not source or source.track_inventory %}checked{% endif %}>
+      <label class="form-check-label" for="track_inventory">Track inventory (stock) for this item</label>
+      <div class="form-text">Untick for items that are not kept in stock (services, consumables, etc.). They are skipped for stock checks, receipts, deliveries and the Inventory page.</div>
+    </div>
+    <div class="mb-3 form-check">
       <input type="checkbox" name="has_serial" class="form-check-input" id="has_serial" value="true" {% if source and source.has_serial %}checked{% endif %}>
       <label class="form-check-label" for="has_serial">This item has serial numbers</label>
       <div class="form-text">If checked, serial numbers will be captured when this item is received on a purchase order.</div>

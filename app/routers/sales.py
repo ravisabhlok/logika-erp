@@ -604,6 +604,8 @@ def update_sales_status(
         shortages = []
         for line in order.items:
             item = db.query(Item).get(line.item_id)
+            if not item.track_inventory:
+                continue
             available = float(item.current_stock or 0)
             if available < line.quantity:
                 shortages.append(f"{item.name}: need {line.quantity:g}, have {available:g}")
@@ -616,6 +618,8 @@ def update_sales_status(
         # Deduct stock and log a stock-out transaction for each line item.
         for line in order.items:
             item = db.query(Item).get(line.item_id)
+            if not item.track_inventory:
+                continue
             item.current_stock = (item.current_stock or 0) - line.quantity
             db.add(StockTransaction(
                 item_id=item.id, transaction_type="OUT", quantity=line.quantity,

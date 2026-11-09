@@ -24,7 +24,7 @@ def dashboard(request: Request, db: Session = Depends(get_db), user: User = Depe
 
     low_stock_items = (
         db.query(Item)
-        .filter(Item.is_active == True, Item.current_stock <= Item.reorder_level)  # noqa: E712
+        .filter(Item.is_active == True, Item.track_inventory == True, Item.current_stock <= Item.reorder_level)  # noqa: E712
         .order_by(Item.current_stock.asc())
         .limit(10)
         .all()

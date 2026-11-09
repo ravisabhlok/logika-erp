@@ -557,7 +557,7 @@ async def issue_invoice(invoice_id: int, request: Request, db: Session = Depends
         # be as many unshipped serials as there is stock), but a plain
         # quantity-based line had no floor at all until now.
         for line in invoice.items:
-            if line.item.has_serial:
+            if line.item.has_serial or not line.item.track_inventory:
                 continue
             available = float(line.item.current_stock or 0)
             if available < line.quantity:
@@ -606,6 +606,8 @@ async def issue_invoice(invoice_id: int, request: Request, db: Session = Depends
     if not billing_only:
         for line in invoice.items:
             item = line.item
+            if not item.track_inventory:
+                continue
             item.current_stock = (item.current_stock or 0) - line.quantity
             db.add(StockTransaction(
                 item_id=item.id, transaction_type="OUT", quantity=line.quantity,
@@ -666,6 +668,8 @@ def cancel_invoice(invoice_id: int, db: Session = Depends(get_db), user: User = 
     if invoice.stock_deducted:
         for line in invoice.items:
             item = line.item
+            if not item.track_inventory:
+                continue
             item.current_stock = (item.current_stock or 0) + line.quantity
             db.add(StockTransaction(
                 item_id=item.id, transaction_type="IN", quantity=line.quantity,

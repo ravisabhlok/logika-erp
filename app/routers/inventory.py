@@ -28,7 +28,7 @@ def _split_serials(raw: str) -> list[str]:
 
 @router.get("")
 def list_inventory(request: Request, db: Session = Depends(get_db), user: User = Depends(require_module_permission("inventory", "view"))):
-    items = db.query(Item).order_by(Item.name).all()
+    items = db.query(Item).filter(Item.track_inventory == True).order_by(Item.name).all()  # noqa: E712
     perms = get_user_module_permissions(user, db, "inventory")
     # Qty placed with vendors (open POs) but not yet received — pending balance only.
     on_order = on_order_map(db)
@@ -40,7 +40,7 @@ def list_inventory(request: Request, db: Session = Depends(get_db), user: User =
 
 @router.get("/adjust")
 def adjust_form(request: Request, db: Session = Depends(get_db), user: User = Depends(require_module_permission("inventory", "add"))):
-    items = db.query(Item).filter(Item.is_active == True).order_by(Item.name).all()  # noqa: E712
+    items = db.query(Item).filter(Item.is_active == True, Item.track_inventory == True).order_by(Item.name).all()  # noqa: E712
     return templates.TemplateResponse("inventory/adjust.html", {"request": request, "user": user, "items": items})
 
 

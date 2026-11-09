@@ -162,7 +162,7 @@ def explode_demand(db: Session, demand: dict, sources: dict, include_reorder_buf
             continue
         buffer = float(item.reorder_level or 0) if include_reorder_buffer else 0.0
         required = demand.get(item_id, 0.0) + buffer
-        if item.is_assembly and item.bom_components:
+        if item.is_assembly and item.bom_components and item.track_inventory:
             exploded.add(item_id)
             in_stock = float(item.current_stock or 0)
             shortfall = max(0.0, required - in_stock)

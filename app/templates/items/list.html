@@ -75,7 +75,7 @@
     <thead><tr><th>Name</th><th>Categories</th><th>Unit</th><th>Purchase Price</th><th>Sales Price</th><th>Stock</th><th>Reorder At</th></tr></thead>
     <tbody>
     {% for i in items %}
-      <tr class="{{ 'table-warning' if i.current_stock <= i.reorder_level else '' }}"
+      <tr class="{{ 'table-warning' if i.track_inventory and i.current_stock <= i.reorder_level else '' }}"
           data-search="{{ (i.name ~ ' ' ~ (i.small_description or '') ~ ' ' ~ (i.description or ''))|lower }}">
         <td>
           <a href="/items/{{ i.id }}" class="text-decoration-none fw-semibold">{{ i.name }}</a>
@@ -90,7 +90,7 @@
         <td>{{ i.unit }}</td>
         <td>{{ i.purchase_price|inr }}</td>
         <td>{{ i.sales_price|inr }}</td>
-        <td class="{{ 'low-stock' if i.current_stock <= i.reorder_level else '' }}">{{ i.current_stock|qty }}</td>
+        <td class="{{ 'low-stock' if i.track_inventory and i.current_stock <= i.reorder_level else '' }}">{% if i.track_inventory %}{{ i.current_stock|qty }}{% else %}<span class="badge bg-secondary">non-inventory</span>{% endif %}</td>
         <td>{{ i.reorder_level|qty }}</td>
       </tr>
     {% else %}

@@ -51,7 +51,11 @@
   <div class="col-md-3">
     <div class="card p-3">
       <div class="text-muted small">Current Stock</div>
+      {% if item.track_inventory %}
       <div class="fs-5 {{ 'low-stock' if item.current_stock <= item.reorder_level else '' }}">{{ item.current_stock|qty }}</div>
+      {% else %}
+      <div class="fs-5"><span class="badge bg-secondary">non-inventory</span></div>
+      {% endif %}
       <div class="text-muted small">Reorder at {{ item.reorder_level|qty }}</div>
     </div>
   </div>

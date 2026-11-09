@@ -152,6 +152,8 @@ async def complete_production_order(order_id: int, request: Request, db: Session
     # Validate every component has enough stock before touching anything.
     shortages = []
     for line in order.components:
+        if not line.component_item.track_inventory:
+            continue
         if line.component_item.current_stock < line.quantity_required:
             shortages.append(
                 f"{line.component_item.name}: need {line.quantity_required}, have {line.component_item.current_stock}"
@@ -200,6 +202,8 @@ async def complete_production_order(order_id: int, request: Request, db: Session
 
     for line in order.components:
         component = db.query(Item).get(line.component_item_id)
+        if not component.track_inventory:
+            continue
         component.current_stock -= line.quantity_required
         db.add(StockTransaction(
             item_id=component.id, transaction_type="OUT", quantity=line.quantity_required,
@@ -208,12 +212,13 @@ async def complete_production_order(order_id: int, request: Request, db: Session
         ))
 
     finished = db.query(Item).get(order.item_id)
-    finished.current_stock = (finished.current_stock or 0) + order.quantity
-    db.add(StockTransaction(
-        item_id=finished.id, transaction_type="IN", quantity=order.quantity,
-        reference_type="production_order", reference_id=order.id,
-        notes=f"Built via {order.order_no}",
-    ))
+    if finished.track_inventory:
+        finished.current_stock = (finished.current_stock or 0) + order.quantity
+        db.add(StockTransaction(
+            item_id=finished.id, transaction_type="IN", quantity=order.quantity,
+            reference_type="production_order", reference_id=order.id,
+            notes=f"Built via {order.order_no}",
+        ))
     for serial in serials:
         db.add(ItemSerial(
             item_id=finished.id, serial_number=serial, production_order_id=order.id,

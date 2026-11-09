@@ -166,10 +166,14 @@ async def create_item(
     current_stock: float = Form(0),
     has_serial: bool = Form(False),
     is_assembly: bool = Form(False),
+    track_inventory: bool = Form(False),
     db: Session = Depends(get_db),
     user: User = Depends(require_module_permission("items", "add")),
 ):
     form = await request.form()
+    if not track_inventory:
+        has_serial = False
+        current_stock = 0
     categories = get_or_create_categories(db, form.getlist("categories"))
     item = Item(
         name=name, description=description, small_description=small_description.strip() or None,
@@ -177,7 +181,7 @@ async def create_item(
         hsn_code=hsn_code.strip() or None, gst_percentage=gst_percentage,
         purchase_price=purchase_price, sales_price=sales_price,
         reorder_level=reorder_level, current_stock=current_stock,
-        has_serial=has_serial, is_assembly=is_assembly,
+        has_serial=has_serial, is_assembly=is_assembly, track_inventory=track_inventory,
     )
     if is_assembly:
         item.bom_components = build_bom_components(
@@ -292,12 +296,15 @@ async def update_item(
     reorder_level: float = Form(0),
     has_serial: bool = Form(False),
     is_assembly: bool = Form(False),
+    track_inventory: bool = Form(False),
     is_active: bool = Form(False),
     db: Session = Depends(get_db),
     user: User = Depends(require_module_permission("items", "edit")),
 ):
     form = await request.form()
     item = db.query(Item).get(item_id)
+    if not track_inventory:
+        has_serial = False
 
     # Field-level diff captured against the *current* row before anything is
     # overwritten — covers pricing/stock-relevant fields plus the rest of
@@ -318,6 +325,7 @@ async def update_item(
         "reorder_level": reorder_level,
         "has_serial": has_serial,
         "is_assembly": is_assembly,
+        "track_inventory": track_inventory,
         "is_active": is_active,
     })
 
@@ -333,6 +341,7 @@ async def update_item(
     item.reorder_level = reorder_level
     item.has_serial = has_serial
     item.is_assembly = is_assembly
+    item.track_inventory = track_inventory
     item.bom_components = (
         build_bom_components(item, form.getlist("component_item_id"), form.getlist("component_quantity"))
         if is_assembly else []

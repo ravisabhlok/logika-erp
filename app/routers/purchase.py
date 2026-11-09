@@ -103,7 +103,7 @@ def compute_global_requirements(db: Session):
         if item_id in exploded:
             continue  # assemblies were broken down into their components above
         item = db.query(Item).get(item_id)
-        if not item:
+        if not item or not item.track_inventory:
             continue
         buffer = float(item.reorder_level or 0)
         required = sales_demand + buffer
@@ -881,13 +881,14 @@ async def receive_purchase_order(order_id: int, request: Request, db: Session = 
         if not qty:
             continue
         item = db.query(Item).get(line.item_id)
-        item.current_stock = Decimal(str(item.current_stock or 0)) + qty
         line.received_quantity = Decimal(str(line.received_quantity or 0)) + qty
-        db.add(StockTransaction(
-            item_id=item.id, transaction_type="IN", quantity=qty,
-            reference_type="purchase_order", reference_id=order.id,
-            notes=f"Received against {order.order_no}",
-        ))
+        if item.track_inventory:
+            item.current_stock = Decimal(str(item.current_stock or 0)) + qty
+            db.add(StockTransaction(
+                item_id=item.id, transaction_type="IN", quantity=qty,
+                reference_type="purchase_order", reference_id=order.id,
+                notes=f"Received against {order.order_no}",
+            ))
         for serial in serials_by_line.get(line.id, []):
             db.add(ItemSerial(
                 item_id=item.id, serial_number=serial,

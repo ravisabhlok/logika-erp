@@ -412,6 +412,8 @@ async def create_bill(
         # capture serials — mirrors receive_purchase_order's write phase.
         for bill_item in bill.items:
             item = bill_item.item
+            if not item.track_inventory:
+                continue
             item.current_stock = float(item.current_stock or 0) + float(bill_item.quantity)
             db.add(StockTransaction(
                 item_id=item.id, transaction_type="IN", quantity=bill_item.quantity,
