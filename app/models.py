@@ -656,6 +656,7 @@ class PurchaseOrder(Base):
     vendor = relationship("Vendor", back_populates="purchase_orders")
     items = relationship("PurchaseOrderItem", back_populates="purchase_order", cascade="all, delete-orphan")
     bills = relationship("Bill", back_populates="purchase_order")
+    advances = relationship("PurchaseOrderAdvance", back_populates="purchase_order", order_by="PurchaseOrderAdvance.id")
     approved_by_user = relationship("User", foreign_keys=[approved_by])
     confirmed_by_user = relationship("User", foreign_keys=[confirmed_by])
     short_closed_by_user = relationship("User", foreign_keys=[short_closed_by])
@@ -826,11 +827,39 @@ class BillPayment(Base):
     # Set when a bank-confirmed PaymentLine created this payment
     # (app/payments_service.py:sync_source) rather than it being typed in.
     payment_line_id = Column(Integer, ForeignKey("payment_lines.id"), nullable=True, index=True)
+    # Set when this payment is (part of) a PO advance applied to the bill
+    # (app/po_advances.py:apply_po_advances).
+    po_advance_id = Column(Integer, ForeignKey("purchase_order_advances.id"), nullable=True, index=True)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     bill = relationship("Bill", back_populates="payments")
     created_by_user = relationship("User", foreign_keys=[created_by])
+    po_advance = relationship("PurchaseOrderAdvance")
+
+
+class PurchaseOrderAdvance(Base):
+    """Money actually paid to the vendor in advance against a PO, before (or
+    between) shipments. A row exists only once the money has really gone out:
+    on bank confirmation of a PO_ADVANCE PaymentLine (payment_line_id set), or
+    when a cheque/cash advance is recorded by hand. Never edited: how much is
+    still unused is amount minus the BillPayment rows that point at it
+    (po_advance_id), so a vendor supplying a PO in parts consumes the advance
+    bill by bill. See app/po_advances.py."""
+    __tablename__ = "purchase_order_advances"
+
+    id = Column(Integer, primary_key=True)
+    purchase_order_id = Column(Integer, ForeignKey("purchase_orders.id"), nullable=False, index=True)
+    amount = Column(Numeric(14, 2), nullable=False)
+    paid_date = Column(DateTime, default=datetime.utcnow, nullable=False)
+    mode = Column(String(30), nullable=True)
+    reference_no = Column(String(80), nullable=True)
+    notes = Column(Text, nullable=True)
+    payment_line_id = Column(Integer, ForeignKey("payment_lines.id"), nullable=True, index=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    purchase_order = relationship("PurchaseOrder", back_populates="advances")
 
 
 # ---------------------------------------------------------------------------
@@ -1039,7 +1068,7 @@ class PaymentLine(Base):
 
     id = Column(Integer, primary_key=True)
     batch_id = Column(Integer, ForeignKey("payment_batches.id"), nullable=True)
-    source_type = Column(String(10), nullable=False)  # BILL / EXPENSE / PAYEE
+    source_type = Column(String(10), nullable=False)  # BILL / EXPENSE / PAYEE / PO_ADVANCE
     source_id = Column(Integer, nullable=True)
     payee_id = Column(Integer, ForeignKey("payees.id"), nullable=True)
     vendor_id = Column(Integer, ForeignKey("vendors.id"), nullable=True)

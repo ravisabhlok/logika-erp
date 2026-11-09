@@ -25,6 +25,8 @@ from app.models import (
 )
 from app.requirements import compute_demand_map, on_order_qty, last_vendor
 from app.audit import diff_fields, log_field_changes, log_action
+from app.payments_service import queue_po_advance, BADGE as PAY_BADGE, STATUS_TEXT as PAY_STATUS_TEXT, mask
+from app.po_advances import ADVANCE_STATUSES, po_advance_summary, record_advance, advance_remaining
 from app.routers.bills import record_po_bill
 
 router = APIRouter(prefix="/purchase", tags=["purchase"])
@@ -301,9 +303,14 @@ def view_purchase_order(order_id: int, request: Request, db: Session = Depends(g
         .order_by(StockTransaction.transaction_date, StockTransaction.id)
         .all()
     )
+    advance_summary = po_advance_summary(db, order)
+    advance_rows = [(a, advance_remaining(db, a)) for a in order.advances]
     return templates.TemplateResponse(
         "purchase/detail.html",
-        {"request": request, "user": user, "order": order, "perms": perms, "receipts": receipts},
+        {"request": request, "user": user, "order": order, "perms": perms, "receipts": receipts,
+         "adv": advance_summary, "advance_rows": advance_rows, "advance_statuses": ADVANCE_STATUSES,
+         "pay_badge": PAY_BADGE, "pay_status_text": PAY_STATUS_TEXT, "mask": mask,
+         "today": datetime.utcnow().strftime("%Y-%m-%d")},
     )
 
 
@@ -1050,3 +1057,63 @@ def delete_purchase_order(order_id: int, db: Session = Depends(get_db), user: Us
         return RedirectResponse(url=f"/purchase/{order_id}?error={quote(msg)}", status_code=303)
 
     return RedirectResponse(url="/purchase?success=Purchase order deleted", status_code=303)
+
+
+def _advance_amount(form) -> Decimal:
+    try:
+        return Decimal(str(form.get("amount", "")).replace(",", "").strip() or "0").quantize(Decimal("0.01"))
+    except (InvalidOperation, ArithmeticError):
+        raise ValueError("Enter a valid amount")
+
+
+@router.post("/{order_id}/advance")
+async def send_po_advance(
+    order_id: int, request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_module_permission("purchase", "edit")),
+):
+    """Queue an advance against this PO for bank payment. It becomes a real advance (and is applied to the PO's
+    bills) only when the bank confirms it - see app/payments_service.py:_record_po_advance."""
+    order = db.query(PurchaseOrder).options(joinedload(PurchaseOrder.vendor), joinedload(PurchaseOrder.advances)).get(order_id)
+    if not order:
+        return RedirectResponse(url="/purchase?error=Purchase order not found", status_code=303)
+    form = await request.form()
+    try:
+        pay_date = _parse_date(form.get("pay_date", ""))
+        if pay_date is None:
+            raise ValueError("Choose the pay date")
+        queue_po_advance(db, user, order, _advance_amount(form), pay_date.date())
+    except ValueError as ex:
+        return RedirectResponse(url=f"/purchase/{order_id}?error={quote(str(ex))}", status_code=303)
+    db.commit()
+    return RedirectResponse(url=f"/purchase/{order_id}?success={quote('Advance sent for bank payment. It now waits on the Bank Payments page; it is applied to bills once the bank confirms it.')}", status_code=303)
+
+
+@router.post("/{order_id}/advance/record")
+async def record_po_advance(
+    order_id: int, request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_module_permission("purchase", "edit")),
+):
+    """Record an advance already paid outside the bank file (cheque, cash, manual transfer). Counts immediately."""
+    order = db.query(PurchaseOrder).options(joinedload(PurchaseOrder.advances)).get(order_id)
+    if not order:
+        return RedirectResponse(url="/purchase?error=Purchase order not found", status_code=303)
+    form = await request.form()
+    try:
+        if order.status not in ADVANCE_STATUSES:
+            raise ValueError("an advance can only be recorded while the order is ordered or partially received")
+        amount = _advance_amount(form)
+        if amount <= 0:
+            raise ValueError("Amount must be more than 0")
+        pos = po_advance_summary(db, order)
+        if amount > pos["room"] + Decimal("0.005"):
+            raise ValueError(f"Amount {amount:,.2f} is more than the order value not yet advanced ({pos['room']:,.2f})")
+        paid_date = _parse_date(form.get("paid_date", "")) or datetime.utcnow()
+    except ValueError as ex:
+        return RedirectResponse(url=f"/purchase/{order_id}?error={quote(str(ex))}", status_code=303)
+    record_advance(
+        db, user, order, amount, paid_date, form.get("mode", "") or None,
+        (form.get("reference_no", "") or "").strip()[:80] or None, (form.get("notes", "") or "").strip() or None)
+    db.commit()
+    return RedirectResponse(url=f"/purchase/{order_id}?success={quote('Advance recorded. It will be applied to the bills booked against this order.')}", status_code=303)

@@ -220,6 +220,93 @@
 </div>
 {% endif %}
 
+{% if order.advances or adv.lines or order.status in advance_statuses %}
+<div class="card p-3 mt-3">
+  <div class="d-flex justify-content-between align-items-center mb-2">
+    <div class="text-muted small">Advance Payments</div>
+    <div class="small text-muted">
+      Paid {{ adv.paid|inr }} &middot; applied to bills {{ adv.used|inr }} &middot; <strong>unused {{ adv.unused|inr }}</strong>
+    </div>
+  </div>
+
+  {% if advance_rows %}
+  <table class="table table-sm mb-3">
+    <thead><tr><th>Date</th><th class="text-end">Amount</th><th>Mode</th><th>Reference</th><th class="text-end">Still unused</th></tr></thead>
+    <tbody>
+    {% for a, remaining in advance_rows %}
+      <tr>
+        <td>{{ a.paid_date.strftime('%d-%b-%Y') }}</td>
+        <td class="text-end">{{ a.amount|inr }}</td>
+        <td>{{ a.mode or '-' }}</td>
+        <td>{{ a.reference_no or '-' }}</td>
+        <td class="text-end">{{ remaining|inr }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  {% set pending_lines = adv.lines|selectattr('status', 'ne', 'Confirmed')|list %}
+  {% if pending_lines %}
+  <div class="text-muted small mb-1">Bank advances waiting for the bank</div>
+  <table class="table table-sm mb-3">
+    <thead><tr><th>Pay date</th><th class="text-end">Amount</th><th>Status</th><th>Batch</th></tr></thead>
+    <tbody>
+    {% for ln in pending_lines %}
+      <tr>
+        <td>{{ ln.pay_date.strftime('%d-%b-%Y') if ln.pay_date }}</td>
+        <td class="text-end">{{ ln.amount|inr }}</td>
+        <td><span class="badge {{ pay_badge[ln.status] }}">{{ pay_status_text[ln.status] }}</span></td>
+        <td>{% if ln.batch %}<a href="/payments/batch/{{ ln.batch.id }}">{{ ln.batch.batch_no }}</a>{% else %}-{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  {% if order.status in advance_statuses and perms.edit and adv.room > 0.005 %}
+  <div class="border rounded p-2 mb-2">
+    <div class="fw-semibold small mb-1">Pay advance by bank transfer</div>
+    {% if order.currency != 'INR' %}
+    <div class="text-muted small">Bank advances are for INR orders - record this one manually below.</div>
+    {% elif not order.vendor.bank_account_no or not order.vendor.bank_ifsc %}
+    <div class="text-muted small">{{ order.vendor.name }} has no bank account / IFSC - an admin must add them on the <a href="/vendors/{{ order.vendor.id }}">vendor page</a>.</div>
+    {% elif adv.in_progress > 0 %}
+    <div class="text-muted small">A bank advance of {{ adv.in_progress|inr }} is waiting for the bank. Finish or withdraw it on the <a href="/payments">Bank Payments</a> page before sending another.</div>
+    {% else %}
+    <form method="post" action="/purchase/{{ order.id }}/advance" class="row g-2 align-items-end">
+      <div class="col-auto"><label class="form-label small mb-0">Amount</label>
+        <input type="number" name="amount" step="0.01" min="0.01" max="{{ '%.2f' % adv.room }}" class="form-control form-control-sm" required></div>
+      <div class="col-auto"><label class="form-label small mb-0">Pay date</label>
+        <input type="date" name="pay_date" value="{{ today }}" class="form-control form-control-sm" required></div>
+      <div class="col-auto text-muted small align-self-center">to {{ order.vendor.name }}, a/c {{ mask(order.vendor.bank_account_no) }}</div>
+      <div class="col-auto"><button class="btn btn-dark btn-sm">Send for bank payment</button></div>
+    </form>
+    {% endif %}
+  </div>
+
+  <div class="text-muted small mb-1">Or record an advance paid outside the bank file (cheque, cash, manual transfer)</div>
+  <form method="post" action="/purchase/{{ order.id }}/advance/record" class="row g-2 align-items-end">
+    <div class="col-auto"><label class="form-label small mb-0">Date</label>
+      <input type="date" name="paid_date" value="{{ today }}" class="form-control form-control-sm"></div>
+    <div class="col-auto"><label class="form-label small mb-0">Amount</label>
+      <input type="number" name="amount" step="0.01" min="0.01" max="{{ '%.2f' % adv.room }}" class="form-control form-control-sm" required></div>
+    <div class="col-auto"><label class="form-label small mb-0">Mode</label>
+      <select name="mode" class="form-select form-select-sm">
+        <option value="Bank Transfer">Bank Transfer</option><option value="Cheque">Cheque</option>
+        <option value="Cash">Cash</option><option value="Other">Other</option>
+      </select></div>
+    <div class="col-auto"><label class="form-label small mb-0">Reference No.</label>
+      <input type="text" name="reference_no" class="form-control form-control-sm" placeholder="UTR / cheque no."></div>
+    <div class="col-auto"><label class="form-label small mb-0">Notes</label>
+      <input type="text" name="notes" class="form-control form-control-sm"></div>
+    <div class="col-auto"><button type="submit" class="btn btn-success btn-sm">Record Advance</button></div>
+  </form>
+  {% endif %}
+  <div class="text-muted small mt-2">An advance is applied automatically to every bill booked against this order, bill by bill, so a part shipment only takes what it needs.</div>
+</div>
+{% endif %}
+
 <div class="card p-3 mt-3">
   <div class="d-flex justify-content-between align-items-center mb-2">
     <div class="text-muted small">Bills</div>

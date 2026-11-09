@@ -32,6 +32,7 @@ from app.models import (
 )
 from app.audit import log_action
 from app.payments_service import BADGE, STATUS_TEXT, bill_summary, mask, queue_bill
+from app.po_advances import apply_po_advances
 
 router = APIRouter(prefix="/bills", tags=["bills"])
 templates = Jinja2Templates(directory="app/templates")
@@ -168,6 +169,9 @@ def record_po_bill(
             bill.attachment_stored_filename = stored_filename
 
     db.add(bill)
+    # Any advance already paid against this PO goes straight onto the new bill.
+    db.flush()
+    apply_po_advances(db, order, user)
     return bill
 
 
@@ -433,8 +437,15 @@ async def create_bill(
         + f" — {len(bill.items)} line(s), total {bill.total_amount}"
         + (", stock and serials updated" if bill.stock_updated else ""),
     )
+    advance_note = ""
+    if order:
+        before = float(bill.amount_paid or 0)
+        apply_po_advances(db, order, user)
+        applied = float(bill.amount_paid or 0) - before
+        if applied > 0.005:
+            advance_note = f" Advance of {applied:,.2f} paid earlier was applied to it."
     db.commit()
-    return RedirectResponse(url=f"/bills/{bill.id}?success=Bill recorded", status_code=303)
+    return RedirectResponse(url=f"/bills/{bill.id}?success={quote('Bill recorded.' + advance_note)}", status_code=303)
 
 
 async def _rerender_new_form(request, db, user, order, errors, form):
@@ -583,7 +594,14 @@ def cancel_bill(bill_id: int, db: Session = Depends(get_db), user: User = Depend
         return RedirectResponse(url="/bills?error=Bill not found", status_code=303)
     if bill.status == "cancelled":
         return RedirectResponse(url=f"/bills/{bill_id}?error=Already cancelled", status_code=303)
+    # Advance applied from the PO is just a transfer of money already paid - cancelling the bill hands it back to
+    # the PO's unused advance. Real payments still have to be removed by hand first.
+    for p in [p for p in bill.payments if p.po_advance_id]:
+        db.delete(p)
+    db.flush()
+    bill.payments = [p for p in bill.payments if not p.po_advance_id]
     if bill.payments:
+        db.rollback()
         return RedirectResponse(url=f"/bills/{bill_id}?error=Remove the recorded payment(s) before cancelling this bill", status_code=303)
 
     if bill.stock_updated:

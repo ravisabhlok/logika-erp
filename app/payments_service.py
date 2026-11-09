@@ -57,6 +57,27 @@ def sync_source(db, line, user=None):
         return
     if line.source_type == "BILL" and line.source_id and line.status == "Confirmed":
         _record_bill_payment(db, line, user)
+    if line.source_type == "PO_ADVANCE" and line.source_id and line.status == "Confirmed":
+        _record_po_advance(db, line, user)
+
+
+def _record_po_advance(db, line, user):
+    """A bank-confirmed PO_ADVANCE line becomes a PurchaseOrderAdvance (once) and is applied to the PO's open bills."""
+    from app.models import PurchaseOrder, PurchaseOrderAdvance
+    from app.po_advances import record_advance
+
+    order = db.get(PurchaseOrder, line.source_id)
+    if order is None:
+        return
+    if db.query(PurchaseOrderAdvance).filter(PurchaseOrderAdvance.payment_line_id == line.id).first():
+        return
+    paid_on = line.confirmed_on or line.pay_date
+    record_advance(
+        db, user, order, line.amount,
+        datetime(paid_on.year, paid_on.month, paid_on.day) if paid_on else datetime.utcnow(),
+        line.mode, line.bank_ref,
+        f"Bank payment {line.batch.batch_no if line.batch_id and line.batch else ''}".strip(),
+        payment_line_id=line.id)
 
 
 def _record_bill_payment(db, line, user):
@@ -125,6 +146,32 @@ def queue_bill(db, user, bill, amount, pay_date):
         raise ValueError(f"amount {amount:,.2f} is more than the unpaid balance {pos['balance']:,.2f}")
     return _new_line(db, user, source_type="BILL", source_id=bill.id, vendor=vendor, name=vendor.name, acct=acct,
                      ifsc=ifsc, bank=vendor.bank_name, amount=amount, remark=f"Bill {bill.bill_ref}", pay_date=pay_date)
+
+
+def queue_po_advance(db, user, order, amount, pay_date):
+    """Send an advance against a Purchase Order to the bank queue; pays the vendor's saved bank account. The advance
+    only exists (and is applied to the PO's bills) once the bank confirms it. Raises ValueError with a user message."""
+    from app.po_advances import ADVANCE_STATUSES, po_advance_summary
+
+    vendor = order.vendor
+    acct, ifsc = (vendor.bank_account_no or "").strip(), (vendor.bank_ifsc or "").strip()
+    if order.status not in ADVANCE_STATUSES:
+        raise ValueError("an advance can only be paid while the order is ordered or partially received")
+    if not (acct and ifsc):
+        raise ValueError(f"{vendor.name} has no bank account / IFSC - an admin must add them on the vendor page")
+    if order.currency != "INR":
+        raise ValueError("bank advances are for INR orders - record a foreign-currency advance manually")
+    amount = Decimal(amount)
+    if amount <= 0:
+        raise ValueError("amount must be more than 0")
+    pos = po_advance_summary(db, order)
+    if pos["in_progress"] > 0:
+        raise ValueError("a bank advance for this order is already waiting for the bank - finish or withdraw it first")
+    if amount > pos["room"] + TOLERANCE:
+        raise ValueError(f"amount {amount:,.2f} is more than the order value not yet advanced ({pos['room']:,.2f})")
+    return _new_line(db, user, source_type="PO_ADVANCE", source_id=order.id, vendor=vendor, name=vendor.name,
+                     acct=acct, ifsc=ifsc, bank=vendor.bank_name, amount=amount,
+                     remark=f"Advance {order.order_no}", pay_date=pay_date)
 
 
 def queue_payee(db, user, payee, amount, pay_date, remark):
