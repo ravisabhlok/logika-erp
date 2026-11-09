@@ -880,6 +880,19 @@ async def receive_purchase_order(order_id: int, request: Request, db: Session = 
     if not errors and not receive_qty:
         errors["_general"] = "Enter a quantity greater than 0 for at least one line."
 
+    # The vendor's bill details are mandatory: a receipt can't be confirmed
+    # until the bill for this shipment is entered (it is recorded below).
+    vendor_bill_no = (form.get("vendor_bill_no") or "").strip()
+    bill_date_raw = (form.get("bill_date") or "").strip()
+    submitted["bill"] = {
+        "vendor_bill_no": vendor_bill_no, "bill_date": bill_date_raw,
+        "due_date": form.get("due_date", ""), "bill_notes": form.get("bill_notes", ""),
+    }
+    if not vendor_bill_no:
+        errors["bill_no"] = "Enter the vendor's bill number - goods can't be received until the bill details are entered."
+    if not bill_date_raw:
+        errors["bill_date"] = "Enter the bill date."
+
     if errors:
         return _render_receive(request, user, order, errors, submitted, status_code=400)
 
@@ -923,14 +936,13 @@ async def receive_purchase_order(order_id: int, request: Request, db: Session = 
     old_status = order.status
     order.status = "received" if fully_received else "partially_received"
 
-    # Optional "enter the bill while you're here" section on the same
+    # Mandatory "enter the bill" section on the same
     # screen — see receive.html. The bill covers only what arrived in THIS
     # shipment (vendors usually bill per dispatch). Vendor bill no left
     # blank means the vendor's invoice hasn't arrived yet; it stays
     # available via the order's "Record Bill" button afterward.
     bill = None
-    vendor_bill_no = (form.get("vendor_bill_no") or "").strip()
-    if vendor_bill_no:
+    if vendor_bill_no:  # always true here: the bill number is required above
         bill_date = _parse_date(form.get("bill_date", "")) or datetime.utcnow()
         due_date = _parse_date(form.get("due_date", ""))
         bill_notes = form.get("bill_notes", "")

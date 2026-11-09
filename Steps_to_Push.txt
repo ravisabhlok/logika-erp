@@ -13,3 +13,4 @@ sudo -u erp ./venv/bin/alembic upgrade head
 sudo systemctl restart logika-erp
 sudo systemctl status logika-erp
 
+SSH ravisabhlok@100.78.115.38
