@@ -241,6 +241,7 @@ async def create_purchase_order(request: Request, db: Session = Depends(get_db),
     db.add(order)
 
     total = 0
+    gst_total = 0
     # zip's shortest-iterable behavior is fine here even though
     # delivery_date is a newer field than item_id/quantity/unit_price:
     # form.html always submits all four inputs for every line row (a blank
@@ -256,12 +257,14 @@ async def create_purchase_order(request: Request, db: Session = Depends(get_db),
         item = db.query(Item).get(int(item_id_str))
         line_total = price * qty
         total += line_total
+        gst_total += line_total * float(item.gst_percentage or 0) / 100
         order.items.append(PurchaseOrderItem(
             item_id=item.id, quantity=qty, unit_price=price, total=line_total,
             expected_delivery_date=_parse_date(delivery_date_str),
         ))
 
     order.total_amount = total
+    order.gst_amount = gst_total if currency == "INR" else 0
     db.flush()  # need order.id before logging
     log_action(
         db, user, "purchase_order", order.id, order.order_no, "create",
@@ -470,6 +473,7 @@ async def update_purchase_order(order_id: int, request: Request, db: Session = D
     order.items = []  # cascade="all, delete-orphan" removes the old lines on flush
 
     total = 0
+    gst_total = 0
     for item_id_str, qty_str, price_str, delivery_date_str in zip(item_ids, quantities, prices, delivery_dates):
         if not item_id_str or not qty_str:
             continue
@@ -480,12 +484,14 @@ async def update_purchase_order(order_id: int, request: Request, db: Session = D
         item = db.query(Item).get(int(item_id_str))
         line_total = price * qty
         total += line_total
+        gst_total += line_total * float(item.gst_percentage or 0) / 100
         order.items.append(PurchaseOrderItem(
             item_id=item.id, quantity=qty, unit_price=price, total=line_total,
             expected_delivery_date=_parse_date(delivery_date_str),
         ))
 
     order.total_amount = total
+    order.gst_amount = gst_total if currency == "INR" else 0
     if len(order.items) != old_line_count or order.total_amount != old_total:
         changes["line_items"] = (
             f"{old_line_count} line(s), total {old_total}",

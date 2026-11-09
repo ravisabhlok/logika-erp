@@ -617,7 +617,10 @@ class PurchaseOrder(Base):
     # d4f7a9c21b3e_add_purchase_order_currency.
     currency = Column(String(3), default="INR", nullable=False)
     exchange_rate = Column(Numeric(10, 4), default=1, nullable=False)
-    total_amount = Column(Numeric(14, 2), default=0)
+    total_amount = Column(Numeric(14, 2), default=0)  # subtotal, before GST
+    # GST on the order (sum of line total x item.gst_percentage at save time;
+    # INR orders only). Order value incl. GST = total_amount + gst_amount.
+    gst_amount = Column(Numeric(14, 2), default=0, server_default="0", nullable=False)
     notes = Column(Text)
     # Free-text reference to the matching PO number(s) in Zoho (comma-separated
     # if several). Informational only.

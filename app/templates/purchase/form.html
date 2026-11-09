@@ -44,7 +44,11 @@
       <textarea name="notes" class="form-control" rows="2">{{ submitted.notes or '' }}</textarea>
     </div>
 
-    <div class="fw-bold mb-3">Order Total: <span id="orderTotal">0.00</span></div>
+    <div class="mb-3">
+      <div>Subtotal: <span id="orderTotal">0.00</span></div>
+      <div>GST: <span id="orderGst">0.00</span> <span class="text-muted small">(from each item's GST %, INR orders only)</span></div>
+      <div class="fw-bold">Total incl. GST: <span id="orderGrandTotal">0.00</span></div>
+    </div>
 
     <button type="submit" class="btn btn-dark">{{ "Save Changes" if order else "Create Purchase Order" }}</button>
     <a href="{{ '/purchase/%d' % order.id if order else '/purchase' }}" class="btn btn-link">Cancel</a>
@@ -105,7 +109,7 @@ document.getElementById('purchaseOrderForm').addEventListener('keydown', functio
 });
 
 const items = [
-  {% for i in items %}{ id: {{ i.id }}, name: {{ i.name|tojson }}, price: {{ i.purchase_price|float }}, stock: {{ i.current_stock|float }} },{% endfor %}
+  {% for i in items %}{ id: {{ i.id }}, name: {{ i.name|tojson }}, price: {{ i.purchase_price|float }}, stock: {{ i.current_stock|float }}, gst: {{ (i.gst_percentage or 0)|float }} },{% endfor %}
 ];
 const submittedLines = [
   {% for l in submitted.lines %}{ item_id: {{ l.item_id }}, quantity: {{ l.quantity|tojson }}, unit_price: {{ l.unit_price|tojson }}, delivery_date: {{ l.delivery_date|tojson }} },{% endfor %}
@@ -237,9 +241,17 @@ function recalcRow(el) {
 
 function recalcTotal() {
   const currency = document.getElementById('currencySelect').value;
-  let total = 0;
-  document.querySelectorAll('.line-total').forEach(el => total += parseFloat(el.dataset.value) || 0);
+  let total = 0, gst = 0;
+  document.querySelectorAll('#lineTable tbody tr').forEach(row => {
+    const lt = parseFloat(row.querySelector('.line-total').dataset.value) || 0;
+    total += lt;
+    const item = items.find(i => i.id == row.querySelector('.item-id-input').value);
+    // GST is charged on INR orders only (foreign-currency orders are imports).
+    if (item && currency === 'INR') gst += lt * item.gst / 100;
+  });
   document.getElementById('orderTotal').textContent = formatMoney(total, currency);
+  document.getElementById('orderGst').textContent = formatMoney(gst, currency);
+  document.getElementById('orderGrandTotal').textContent = formatMoney(total + gst, currency);
 }
 
 if (submittedLines.length) {
