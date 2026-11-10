@@ -136,9 +136,6 @@ def finish_batch_status(batch):
 def index(request: Request, db: Session = Depends(get_db), user: User = Depends(require_module_permission("payments", "view"))):
     perms = get_user_module_permissions(user, db, "payments")
     waiting = (db.query(PaymentLine).filter_by(status="Queued").order_by(PaymentLine.pay_date, PaymentLine.id).all())
-    groups = {}
-    for ln in waiting:
-        groups.setdefault(ln.pay_date, []).append(ln)
     sender_ids = {ln.requested_by for ln in waiting if ln.requested_by}
     names = {u.id: u.username for u in db.query(User).filter(User.id.in_(sender_ids)).all()} if sender_ids else {}
 
@@ -161,7 +158,7 @@ def index(request: Request, db: Session = Depends(get_db), user: User = Depends(
         live = [ln for ln in b.lines if ln.status != "Withdrawn"]
         rows.append({"b": b, "n": len(live), "total": total_of(live),
                      "confirmed": sum(1 for ln in live if ln.status == "Confirmed")})
-    return render(request, "payments/index.html", user, perms=perms, groups=sorted(groups.items(), key=lambda g: (g[0] is None, g[0])),
+    return render(request, "payments/index.html", user, perms=perms, waiting=waiting,
                   rows=rows, names=names, company=get_company(db), today=date.today(), is_admin=is_admin(user),
                   showing_history=history and history_error is None, history_error=history_error, d_from=d_from, d_to=d_to,
                   success=request.query_params.get("success"), error=request.query_params.get("error"))
@@ -190,13 +187,8 @@ async def make_batch(request: Request, db: Session = Depends(get_db), user: User
     ids = [int(x) for x in form.getlist("line_id") if str(x).isdigit()]
     if pay_date is None or not ids:
         return go("/payments", "Tick the payments to put in the batch.", "error")
-    lines = (db.query(PaymentLine).filter(PaymentLine.id.in_(ids), PaymentLine.status == "Queued",
-                                          PaymentLine.pay_date == pay_date).all())
-    edited = [ln.beneficiary_name for ln in lines
-              if form.get(f"date_{ln.id}") and parse_date(form.get(f"date_{ln.id}")) != ln.pay_date]
-    if edited:
-        return go("/payments", "You changed the pay date of " + ", ".join(edited[:5])
-                  + ' - press "Save pay dates" first, then make the batch.', "error")
+    # Waiting payments are not grouped by date: tick any of them and the batch gets the pay date chosen here.
+    lines = db.query(PaymentLine).filter(PaymentLine.id.in_(ids), PaymentLine.status == "Queued").all()
     if len(lines) != len(set(ids)):
         return go("/payments", "Some of those payments are no longer waiting - please try again.", "error")
     batch = PaymentBatch(pay_date=pay_date, status="Open", title=(form.get("title") or "").strip()[:100] or None,
@@ -204,6 +196,7 @@ async def make_batch(request: Request, db: Session = Depends(get_db), user: User
     db.add(batch)
     db.flush()
     for ln in lines:
+        ln.pay_date = pay_date
         ln.batch_id, ln.status = batch.id, "Batched"
         sync_source(db, ln, user)
     audit(db, user, "payment_batch", batch.id, batch.batch_no, "create",
@@ -232,6 +225,42 @@ async def change_dates(request: Request, db: Session = Depends(get_db), user: Us
     db.commit()
     return go("/payments", f"Pay date changed for {n} payment(s)." if n else "No pay date was changed.",
               "success" if n else "error")
+
+
+@router.post("/pay_part/{line_id}")
+async def pay_part(line_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(require_module_permission("payments", "edit"))):
+    """Pay only part of a waiting payment: this payment is cut down to the amount to pay now and the rest stays waiting
+    as a new payment to the same beneficiary. Tick the part-payment and make the batch as usual; the rest can go in a
+    later batch (or be deleted, which leaves it unpaid on the bill / order it came from)."""
+    form = await request.form()
+    ln = db.get(PaymentLine, line_id)
+    if ln is None or ln.status != "Queued":
+        return go("/payments", "That payment is no longer waiting for a batch.", "error")
+    if ln.source_type == "EXPENSE":
+        return go("/payments", "An expense entry has a fixed amount and cannot be part-paid.", "error")
+    try:
+        part = parse_amount(form.get(f"part_{line_id}"))
+    except ValueError as ex:
+        return go("/payments", f"{ln.beneficiary_name}: {ex}. Type the amount to pay now in the Pay part box.", "error")
+    full = Decimal(ln.amount)
+    if part >= full:
+        return go("/payments", f"{ln.beneficiary_name}: pay-now amount must be less than {full:,.2f}. "
+                  "To pay all of it just tick it and make the batch.", "error")
+    rest = full - part
+    rest_line = PaymentLine(
+        source_type=ln.source_type, source_id=ln.source_id, payee_id=ln.payee_id, vendor_id=ln.vendor_id,
+        beneficiary_name=ln.beneficiary_name, account_no=ln.account_no, ifsc=ln.ifsc, bank_name=ln.bank_name,
+        amount=rest, mode=mode_for(ln.ifsc, rest), remark=ln.remark, pay_date=ln.pay_date,
+        requested_pay_date=ln.requested_pay_date, status="Queued", requested_by=ln.requested_by,
+        requested_at=ln.requested_at, bank_note=ln.bank_note)
+    ln.amount, ln.mode = part, mode_for(ln.ifsc, part)
+    db.add(rest_line)
+    db.flush()
+    audit(db, user, "payment_line", ln.id, ln.beneficiary_name, "split",
+          f"Part payment: {full} cut to {part} to pay now; remaining {rest} stays waiting (payment #{rest_line.id})")
+    db.commit()
+    return go("/payments", f"{ln.beneficiary_name}: {part:,.2f} is ready to pay now (tick it and make the batch); "
+              f"the remaining {rest:,.2f} is still waiting.")
 
 
 @router.post("/withdraw")

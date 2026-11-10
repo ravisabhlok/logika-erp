@@ -41,29 +41,28 @@
 {% endif %}
 
 <h6>Waiting for a batch</h6>
-{% if not groups %}
+{% if not waiting %}
 <div class="card p-3 mb-3 text-muted">Nothing is waiting. Send a bill, an expense or a payee payment for payment and it appears here.</div>
-{% endif %}
-{% for pay_date, lines in groups %}
+{% else %}
 <div class="card p-3 mb-3">
   <form method="post">
-    <input type="hidden" name="pay_date" value="{{ pay_date.strftime('%Y-%m-%d') if pay_date else '' }}">
     <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
-      <div class="fw-semibold">Pay date {{ pay_date.strftime('%d-%b-%Y') if pay_date else '-' }} <span class="text-muted small">({{ lines|length }})</span></div>
+      <div class="fw-semibold">{{ waiting|length }} payment(s) waiting <span class="text-muted small">- tick the ones to pay together</span></div>
       {% if perms.edit %}
       <div class="d-flex gap-2 align-items-center flex-wrap">
+        <label class="small text-muted mb-0">Pay date</label>
+        <input type="date" name="pay_date" value="{{ today.strftime('%Y-%m-%d') }}" class="form-control form-control-sm" style="width:140px;" required>
         <input type="text" name="title" class="form-control form-control-sm" placeholder="Batch title (optional)" style="width:190px;">
         <button class="btn btn-dark btn-sm" formaction="/payments/make_batch">Make batch</button>
-        <button class="btn btn-outline-secondary btn-sm" formaction="/payments/change_dates">Save pay dates</button>
         <input type="text" name="reason" class="form-control form-control-sm" placeholder="Reason (optional)" style="width:150px;">
         <button class="btn btn-outline-danger btn-sm" formaction="/payments/withdraw" onclick="return confirm('Delete the ticked payments from the queue?');">Delete ticked</button>
       </div>
       {% endif %}
     </div>
     <table class="table table-sm align-middle mb-0">
-      <thead><tr><th style="width:30px;"><input type="checkbox" onclick="this.closest('table').querySelectorAll('.pick').forEach(c=>c.checked=this.checked)"></th><th>Beneficiary</th><th>Account</th><th>IFSC</th><th>Mode</th><th class="text-end">Amount</th><th>Remark</th><th>Pay date</th><th>Sent by</th><th></th></tr></thead>
+      <thead><tr><th style="width:30px;"><input type="checkbox" onclick="this.closest('table').querySelectorAll('.pick').forEach(c=>c.checked=this.checked)"></th><th>Beneficiary</th><th>Account</th><th>IFSC</th><th>Mode</th><th class="text-end">Amount</th><th>Remark</th><th>Requested for</th><th>Sent by</th>{% if perms.edit %}<th>Pay part</th>{% endif %}<th></th></tr></thead>
       <tbody>
-      {% for ln in lines %}
+      {% for ln in waiting %}
         <tr>
           <td><input type="checkbox" class="pick" name="line_id" value="{{ ln.id }}"></td>
           <td>{{ ln.beneficiary_name }}{% if ln.bank_note %} <span class="badge bg-warning text-dark" title="{{ ln.bank_note }}">bank changed</span>{% endif %}</td>
@@ -72,8 +71,16 @@
           <td>{{ ln.mode }}</td>
           <td class="text-end">{{ ln.amount|inr }}</td>
           <td>{{ ln.remark or '' }}</td>
-          <td><input type="date" name="date_{{ ln.id }}" value="{{ ln.pay_date.strftime('%Y-%m-%d') if ln.pay_date else '' }}" class="form-control form-control-sm" style="width:140px;" {% if not perms.edit %}disabled{% endif %}></td>
+          <td class="small">{% set rd = ln.requested_pay_date or ln.pay_date %}{{ rd.strftime('%d-%b-%Y') if rd else '-' }}</td>
           <td class="small">{{ names.get(ln.requested_by, '-') }}<br><span class="text-muted">{{ ln.requested_at.strftime('%d-%b %H:%M') if ln.requested_at else '' }}</span></td>
+          {% if perms.edit %}
+          <td style="white-space:nowrap;">
+            {% if ln.source_type != 'EXPENSE' %}
+            <input type="number" name="part_{{ ln.id }}" step="0.01" min="0.01" max="{{ '%.2f' % (ln.amount|float - 0.01) }}" placeholder="amount now" class="form-control form-control-sm d-inline-block" style="width:110px;" onkeydown="if(event.key==='Enter'){event.preventDefault();this.nextElementSibling.click();}">
+            <button class="btn btn-outline-primary btn-sm py-0" formaction="/payments/pay_part/{{ ln.id }}" title="Pay this amount now; the rest keeps waiting">Split</button>
+            {% else %}<span class="text-muted small">fixed amount</span>{% endif %}
+          </td>
+          {% endif %}
           <td>{% if is_admin %}<a href="/payments/edit_bank/{{ ln.id }}" class="btn btn-outline-secondary btn-sm py-0">Edit bank</a>{% endif %}</td>
         </tr>
       {% endfor %}
@@ -81,7 +88,7 @@
     </table>
   </form>
 </div>
-{% endfor %}
+{% endif %}
 
 <div class="d-flex justify-content-between align-items-center mt-4 mb-2 flex-wrap gap-2">
   <h6 class="mb-0">{{ 'Batches in the chosen dates' if showing_history else 'Batches in progress' }}</h6>
