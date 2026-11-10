@@ -5,7 +5,7 @@
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h4 class="mb-0">{{ order.order_no }}</h4>
   <div>
-    {% if order.status in ('draft', 'ordered', 'cancelled') and perms.edit %}
+    {% if order.status in ('draft', 'pending_approval', 'pending_confirmation', 'ordered', 'cancelled') and perms.edit %}
     <a href="/purchase/{{ order.id }}/edit" class="btn btn-outline-secondary btn-sm">Edit</a>
     {% endif %}
     {% if order.status in ('draft', 'pending_approval', 'cancelled') and perms.delete %}

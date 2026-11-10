@@ -381,12 +381,10 @@ def purchase_order_pdf(order_id: int, request: Request, db: Session = Depends(ge
 # it back to 'draft' (see update_purchase_order below) rather than leaving
 # it edited but still marked cancelled — same convention Sales Orders use,
 # see app/routers/sales.py's edit_sales_form. 'pending_approval' and
-# 'pending_confirmation' are deliberately NOT in this list — an order
-# awaiting approval or confirmation shouldn't be editable out from under
-# whoever is reviewing it; reject it back to draft first (see
-# reject_purchase_order / reject_purchase_order_confirmation) if it needs
-# changes.
-EDITABLE_PURCHASE_STATUSES = ("draft", "ordered", "cancelled")
+# 'pending_confirmation' are editable too (by request) so a reviewer's
+# corrections don't need a reject-to-draft round trip; editing does not
+# change the order's status or its approval/confirmation records.
+EDITABLE_PURCHASE_STATUSES = ("draft", "pending_approval", "pending_confirmation", "ordered", "cancelled")
 
 
 @router.get("/{order_id}/edit")
@@ -400,7 +398,7 @@ def edit_purchase_form(order_id: int, request: Request, db: Session = Depends(ge
         return RedirectResponse(url="/purchase?error=Purchase order not found", status_code=303)
     if order.status not in EDITABLE_PURCHASE_STATUSES:
         return RedirectResponse(
-            url=f"/purchase/{order_id}?error=Received orders can't be edited — line items would no longer match the stock/serials already recorded",
+            url=f"/purchase/{order_id}?error=Orders that have been received (fully or partly) can't be edited — line items would no longer match the stock/serials already recorded",
             status_code=303,
         )
 
