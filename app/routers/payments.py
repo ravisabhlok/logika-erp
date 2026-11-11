@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 from app.auth import require_module_permission, get_user_module_permissions
 from app.database import get_db
 from app.formatting import format_inr, format_dt
-from app.models import Company, Payee, PaymentBatch, PaymentConfirmation, PaymentLine, User
+from app.models import Bill, Company, ExpenseEntry, Payee, PaymentBatch, PaymentConfirmation, PaymentLine, PurchaseOrder, User
 from app.payments_confirm import apply_plan, build_plan, parse_report
 from app.payments_export import build_bank_file, mode_for
 from app.payments_service import BADGE, STATUS_TEXT, audit, lines_for_payee, mask, queue_payee, sync_source
@@ -130,6 +130,32 @@ def finish_batch_status(batch):
         batch.status = "Confirmed"
 
 
+def waiting_sources(db, lines):
+    """For each waiting line: where it came from ({'label', 'url'}) and the vendor's own bill number, so the owner can
+    open the source and match the payment against the vendor's paper. Keyed by line id."""
+    def ids(kind):
+        return {ln.source_id for ln in lines if ln.source_type == kind and ln.source_id}
+    bills = {b.id: b for b in db.query(Bill).filter(Bill.id.in_(ids("BILL"))).all()} if ids("BILL") else {}
+    orders = {o.id: o for o in db.query(PurchaseOrder).filter(PurchaseOrder.id.in_(ids("PO_ADVANCE"))).all()} if ids("PO_ADVANCE") else {}
+    exps = {e.id: e for e in db.query(ExpenseEntry).filter(ExpenseEntry.id.in_(ids("EXPENSE"))).all()} if ids("EXPENSE") else {}
+    out = {}
+    for ln in lines:
+        s = {"label": None, "url": None, "bill_no": None}
+        if ln.source_type == "BILL" and ln.source_id in bills:
+            b = bills[ln.source_id]
+            s.update(label=f"Bill {b.bill_ref}", url=f"/bills/{b.id}", bill_no=b.vendor_bill_no)
+        elif ln.source_type == "PO_ADVANCE" and ln.source_id in orders:
+            o = orders[ln.source_id]
+            s.update(label=f"PO advance {o.order_no}", url=f"/purchase/{o.id}")
+        elif ln.source_type == "EXPENSE" and ln.source_id in exps:
+            e = exps[ln.source_id]
+            s.update(label=f"Expense {e.category}", url=f"/expenses/{e.id}/edit", bill_no=e.bill_no)
+        elif ln.source_type == "PAYEE" and ln.payee_id:
+            s.update(label="Payee", url=f"/payments/payees/{ln.payee_id}")
+        out[ln.id] = s
+    return out
+
+
 # ---------------------------------------------------------------- the Bank Payments page
 
 @router.get("")
@@ -138,6 +164,8 @@ def index(request: Request, db: Session = Depends(get_db), user: User = Depends(
     waiting = (db.query(PaymentLine).filter_by(status="Queued").order_by(PaymentLine.pay_date, PaymentLine.id).all())
     sender_ids = {ln.requested_by for ln in waiting if ln.requested_by}
     names = {u.id: u.username for u in db.query(User).filter(User.id.in_(sender_ids)).all()} if sender_ids else {}
+
+    sources = waiting_sources(db, waiting)
 
     # Batches in play (Open / Downloaded-but-not-fully-confirmed) are listed by default. Finished ones (Confirmed,
     # Cancelled) are history: shown only when a From and To date (on the batch's pay date) are chosen.
@@ -158,7 +186,7 @@ def index(request: Request, db: Session = Depends(get_db), user: User = Depends(
         live = [ln for ln in b.lines if ln.status != "Withdrawn"]
         rows.append({"b": b, "n": len(live), "total": total_of(live),
                      "confirmed": sum(1 for ln in live if ln.status == "Confirmed")})
-    return render(request, "payments/index.html", user, perms=perms, waiting=waiting,
+    return render(request, "payments/index.html", user, perms=perms, waiting=waiting, sources=sources,
                   rows=rows, names=names, company=get_company(db), today=date.today(), is_admin=is_admin(user),
                   showing_history=history and history_error is None, history_error=history_error, d_from=d_from, d_to=d_to,
                   success=request.query_params.get("success"), error=request.query_params.get("error"))

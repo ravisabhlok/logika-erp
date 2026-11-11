@@ -60,17 +60,16 @@
       {% endif %}
     </div>
     <table class="table table-sm align-middle mb-0">
-      <thead><tr><th style="width:30px;"><input type="checkbox" onclick="this.closest('table').querySelectorAll('.pick').forEach(c=>c.checked=this.checked)"></th><th>Beneficiary</th><th>Account</th><th>IFSC</th><th>Mode</th><th class="text-end">Amount</th><th>Remark</th><th>Requested for</th><th>Sent by</th>{% if perms.edit %}<th>Pay part</th>{% endif %}<th></th></tr></thead>
+      <thead><tr><th style="width:30px;"><input type="checkbox" onclick="this.closest('table').querySelectorAll('.pick').forEach(c=>c.checked=this.checked)"></th><th>Beneficiary</th><th>Source</th><th>Vendor bill no.</th><th class="text-end">Amount</th><th>Requested for</th><th>Sent by</th>{% if perms.edit %}<th>Pay part</th>{% endif %}<th><button type="button" class="btn btn-link btn-sm p-0" onclick="document.querySelectorAll('.bank-row').forEach(r=>r.classList.toggle('d-none', this.dataset.open==='1')); this.dataset.open = this.dataset.open==='1' ? '0' : '1';" title="Show / hide the bank details of every payment">Bank &#9662;</button></th></tr></thead>
       <tbody>
       {% for ln in waiting %}
+        {% set src = sources.get(ln.id, {}) %}
         <tr>
           <td><input type="checkbox" class="pick" name="line_id" value="{{ ln.id }}"></td>
           <td>{{ ln.beneficiary_name }}{% if ln.bank_note %} <span class="badge bg-warning text-dark" title="{{ ln.bank_note }}">bank changed</span>{% endif %}</td>
-          <td>{{ mask(ln.account_no) }}</td>
-          <td>{{ ln.ifsc }}</td>
-          <td>{{ ln.mode }}</td>
+          <td>{% if src.url %}<a href="{{ src.url }}" target="_blank" rel="noopener" title="Open the source in a new tab">{{ src.label }} &#8599;</a>{% else %}{{ ln.remark or '' }}{% endif %}</td>
+          <td>{{ src.bill_no or '' }}</td>
           <td class="text-end">{{ ln.amount|inr }}</td>
-          <td>{{ ln.remark or '' }}</td>
           <td class="small">{% set rd = ln.requested_pay_date or ln.pay_date %}{{ rd.strftime('%d-%b-%Y') if rd else '-' }}</td>
           <td class="small">{{ names.get(ln.requested_by, '-') }}<br><span class="text-muted">{{ ln.requested_at.strftime('%d-%b %H:%M') if ln.requested_at else '' }}</span></td>
           {% if perms.edit %}
@@ -81,7 +80,14 @@
             {% else %}<span class="text-muted small">fixed amount</span>{% endif %}
           </td>
           {% endif %}
-          <td>{% if is_admin %}<a href="/payments/edit_bank/{{ ln.id }}" class="btn btn-outline-secondary btn-sm py-0">Edit bank</a>{% endif %}</td>
+          <td style="white-space:nowrap;"><button type="button" class="btn btn-outline-secondary btn-sm py-0" onclick="this.closest('tr').nextElementSibling.classList.toggle('d-none')" title="Show / hide bank details">Bank</button>
+            {% if is_admin %}<a href="/payments/edit_bank/{{ ln.id }}" class="btn btn-outline-secondary btn-sm py-0">Edit</a>{% endif %}</td>
+        </tr>
+        <tr class="bank-row d-none table-light">
+          <td></td>
+          <td colspan="{{ 9 if perms.edit else 8 }}" class="small text-muted">
+            Account <strong class="text-body">{{ mask(ln.account_no) }}</strong> &middot; IFSC <strong class="text-body">{{ ln.ifsc }}</strong>{% if ln.bank_name %} ({{ ln.bank_name }}){% endif %} &middot; Mode <strong class="text-body">{{ ln.mode }}</strong>{% if src.url and ln.remark %} &middot; Remark {{ ln.remark }}{% endif %}
+          </td>
         </tr>
       {% endfor %}
       </tbody>
