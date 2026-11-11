@@ -11,7 +11,7 @@ from app.formatting import format_qty, format_dt
 from app.models import Item, StockTransaction, ItemSerial, User
 from app.audit import log_action
 from app.requirements import on_order_map
-from app.confidential import guard_doc
+from app.confidential import guard_doc, visible, require_visible
 
 router = APIRouter(prefix="/inventory", tags=["inventory"], dependencies=[Depends(guard_doc(Item, "item_id"))])
 templates = Jinja2Templates(directory="app/templates")
@@ -29,7 +29,7 @@ def _split_serials(raw: str) -> list[str]:
 
 @router.get("")
 def list_inventory(request: Request, db: Session = Depends(get_db), user: User = Depends(require_module_permission("inventory", "view"))):
-    items = db.query(Item).filter(Item.track_inventory == True).order_by(Item.name).all()  # noqa: E712
+    items = visible(db.query(Item), Item, user, db).filter(Item.track_inventory == True).order_by(Item.name).all()  # noqa: E712
     perms = get_user_module_permissions(user, db, "inventory")
     # Qty placed with vendors (open POs) but not yet received — pending balance only.
     on_order = on_order_map(db)
@@ -41,7 +41,7 @@ def list_inventory(request: Request, db: Session = Depends(get_db), user: User =
 
 @router.get("/adjust")
 def adjust_form(request: Request, db: Session = Depends(get_db), user: User = Depends(require_module_permission("inventory", "add"))):
-    items = db.query(Item).filter(Item.is_active == True, Item.track_inventory == True).order_by(Item.name).all()  # noqa: E712
+    items = visible(db.query(Item), Item, user, db).filter(Item.is_active == True, Item.track_inventory == True).order_by(Item.name).all()  # noqa: E712
     return templates.TemplateResponse("inventory/adjust.html", {"request": request, "user": user, "items": items})
 
 
@@ -55,6 +55,7 @@ def submit_adjustment(
     user: User = Depends(require_module_permission("inventory", "add")),
 ):
     item = db.query(Item).get(item_id)
+    require_visible(item, user, db)
     if quantity > 0:
         old_stock = float(item.current_stock or 0)
         # current_stock comes back from SQLAlchemy as Decimal (Numeric(14,4)

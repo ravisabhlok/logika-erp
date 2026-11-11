@@ -60,10 +60,11 @@ def guard_path_param(param: str, model):
 # line items is. Each clause below is a SQL condition that is TRUE for a
 # confidential document, so lists use `~clause` and guards use `clause`.
 # ---------------------------------------------------------------------------
-from sqlalchemy import or_  # noqa: E402
+from sqlalchemy import and_, or_, select  # noqa: E402
 
 from app.models import (  # noqa: E402
     Bill, BillItem, Customer, Invoice, InvoiceItem, Item, Payee, ProductionOrder, ProductionOrderComponent,
+    ExpenseEntry, ExpenseTemplate, PaymentBatch, PaymentLine,
     PurchaseOrder, PurchaseOrderItem, SalesOrder, SalesOrderItem, Vendor,
 )
 
@@ -105,7 +106,27 @@ def _conf_production():
     )
 
 
+def _conf_payment_line():
+    """A bank payment is confidential when its payee / vendor is, or when the bill / PO it pays is."""
+    return or_(
+        PaymentLine.payee_id.in_(select(Payee.id).where(Payee.is_confidential == True)),  # noqa: E712
+        PaymentLine.vendor_id.in_(select(Vendor.id).where(Vendor.is_confidential == True)),  # noqa: E712
+        and_(PaymentLine.source_type == "BILL", PaymentLine.source_id.in_(select(Bill.id).where(_conf_bill()))),
+        and_(PaymentLine.source_type == "PO_ADVANCE",
+             PaymentLine.source_id.in_(select(PurchaseOrder.id).where(_conf_purchase_order()))),
+    )
+
+
+def _conf_payment_batch():
+    """A batch holding any confidential payment is hidden as a whole (its bank file would show them)."""
+    return PaymentBatch.lines.any(_conf_payment_line())
+
+
 CONFIDENTIAL_CLAUSE = {
+    PaymentLine: _conf_payment_line,
+    PaymentBatch: _conf_payment_batch,
+    ExpenseEntry: lambda: ExpenseEntry.payee.has(Payee.is_confidential == True),  # noqa: E712
+    ExpenseTemplate: lambda: ExpenseTemplate.payee.has(Payee.is_confidential == True),  # noqa: E712
     SalesOrder: _conf_sales_order,
     Invoice: _conf_invoice,
     PurchaseOrder: _conf_purchase_order,

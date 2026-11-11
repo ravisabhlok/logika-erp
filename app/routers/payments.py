@@ -27,14 +27,14 @@ from sqlalchemy.orm import Session
 
 from app.auth import require_module_permission, get_user_module_permissions
 from app.database import get_db
-from app.confidential import guard_path_param, visible
+from app.confidential import guard_path_param, guard_doc, visible, visible_docs, can_see_confidential, CONFIDENTIAL_CLAUSE
 from app.formatting import format_inr, format_dt
 from app.models import Bill, Company, ExpenseEntry, Payee, PaymentBatch, PaymentConfirmation, PaymentLine, PurchaseOrder, User
 from app.payments_confirm import apply_plan, build_plan, parse_report
 from app.payments_export import build_bank_file, mode_for
 from app.payments_service import BADGE, STATUS_TEXT, audit, lines_for_payee, mask, queue_payee, sync_source
 
-router = APIRouter(prefix="/payments", tags=["payments"], dependencies=[Depends(guard_path_param("payee_id", Payee))])
+router = APIRouter(prefix="/payments", tags=["payments"], dependencies=[Depends(guard_path_param("payee_id", Payee)), Depends(guard_doc(PaymentBatch, "batch_id")), Depends(guard_doc(PaymentLine, "line_id"))])
 templates = Jinja2Templates(directory="app/templates")
 templates.env.filters["inr"] = format_inr
 templates.env.filters["dt"] = format_dt
@@ -162,7 +162,7 @@ def waiting_sources(db, lines):
 @router.get("")
 def index(request: Request, db: Session = Depends(get_db), user: User = Depends(require_module_permission("payments", "view"))):
     perms = get_user_module_permissions(user, db, "payments")
-    waiting = (db.query(PaymentLine).filter_by(status="Queued").order_by(PaymentLine.pay_date, PaymentLine.id).all())
+    waiting = (visible_docs(db.query(PaymentLine), PaymentLine, user, db).filter_by(status="Queued").order_by(PaymentLine.pay_date, PaymentLine.id).all())
     sender_ids = {ln.requested_by for ln in waiting if ln.requested_by}
     names = {u.id: u.username for u in db.query(User).filter(User.id.in_(sender_ids)).all()} if sender_ids else {}
 
@@ -173,7 +173,7 @@ def index(request: Request, db: Session = Depends(get_db), user: User = Depends(
     d_from, d_to = parse_date(request.query_params.get("from")), parse_date(request.query_params.get("to"))
     history = bool(request.query_params.get("from") or request.query_params.get("to"))
     history_error = None
-    q = db.query(PaymentBatch)
+    q = visible_docs(db.query(PaymentBatch), PaymentBatch, user, db)
     if history and (d_from is None or d_to is None):
         history_error = "Choose both a From date and a To date."
     elif history and d_from > d_to:
@@ -217,9 +217,13 @@ async def make_batch(request: Request, db: Session = Depends(get_db), user: User
     if pay_date is None or not ids:
         return go("/payments", "Tick the payments to put in the batch.", "error")
     # Waiting payments are not grouped by date: tick any of them and the batch gets the pay date chosen here.
-    lines = db.query(PaymentLine).filter(PaymentLine.id.in_(ids), PaymentLine.status == "Queued").all()
+    lines = visible_docs(db.query(PaymentLine), PaymentLine, user, db).filter(PaymentLine.id.in_(ids), PaymentLine.status == "Queued").all()
     if len(lines) != len(set(ids)):
         return go("/payments", "Some of those payments are no longer waiting - please try again.", "error")
+    if can_see_confidential(user, db):
+        conf_ids = {i for (i,) in db.query(PaymentLine.id).filter(PaymentLine.id.in_([ln.id for ln in lines]), CONFIDENTIAL_CLAUSE[PaymentLine]())}
+        if conf_ids and len(conf_ids) != len(lines):
+            return go("/payments", "Confidential payments must go in their own batch - do not mix them with ordinary payments.", "error")
     batch = PaymentBatch(pay_date=pay_date, status="Open", title=(form.get("title") or "").strip()[:100] or None,
                          created_by=user.id, batch_no=next_batch_no(db, pay_date))
     db.add(batch)
@@ -244,7 +248,7 @@ async def change_dates(request: Request, db: Session = Depends(get_db), user: Us
         if not key.startswith("date_") or not key[5:].isdigit():
             continue
         new = parse_date(form.get(key))
-        ln = db.query(PaymentLine).filter_by(id=int(key[5:]), status="Queued").first()
+        ln = visible_docs(db.query(PaymentLine), PaymentLine, user, db).filter_by(id=int(key[5:]), status="Queued").first()
         if ln is None or new is None or new == ln.pay_date:
             continue
         old = ln.pay_date
@@ -301,7 +305,7 @@ async def withdraw(request: Request, db: Session = Depends(get_db), user: User =
     if not ids:
         return go("/payments", "Tick the payments to delete.", "error")
     n = 0
-    for ln in db.query(PaymentLine).filter(PaymentLine.id.in_(ids), PaymentLine.status == "Queued").all():
+    for ln in visible_docs(db.query(PaymentLine), PaymentLine, user, db).filter(PaymentLine.id.in_(ids), PaymentLine.status == "Queued").all():
         ln.status, ln.withdraw_reason = "Withdrawn", reason[:200]
         sync_source(db, ln, user)
         audit(db, user, "payment_line", ln.id, ln.beneficiary_name, "withdraw", reason)
@@ -499,12 +503,12 @@ async def cancel_batch(batch_id: int, request: Request, db: Session = Depends(ge
 
 # ---------------------------------------------------------------- bank confirmation (ICICI Reverse MIS report)
 
-def plan_for(db, data):
+def plan_for(db, data, user=None):
     rows, err = parse_report(data)
     if err:
         return None, err
     company = get_company(db)
-    return build_plan(db, rows, company.bank_debit_acc if company else None), None
+    return build_plan(db, rows, company.bank_debit_acc if company else None, hide_for=user), None
 
 
 @router.post("/confirm")
@@ -516,7 +520,7 @@ async def confirm_review(request: Request, report: UploadFile = File(None), db: 
     data = await report.read(5 * 1024 * 1024 + 1)
     if len(data) > 5 * 1024 * 1024:
         return go("/payments", "That file is too big for a bank report.", "error")
-    plan, err = plan_for(db, data)
+    plan, err = plan_for(db, data, user)
     if err:
         return go("/payments", err, "error")
     os.makedirs(CONFIRM_DIR, exist_ok=True)
@@ -539,7 +543,7 @@ async def confirm_apply(request: Request, db: Session = Depends(get_db), user: U
         return go("/payments", "The uploaded report is no longer available - please upload it again.", "error")
     with open(path, "rb") as fh:
         data = fh.read()
-    plan, err = plan_for(db, data)
+    plan, err = plan_for(db, data, user)
     if err or plan["errors"]:
         return go("/payments", err or plan["errors"][0], "error")
     counts = apply_plan(db, user, plan, (form.get("file_name") or "bank report.xlsx")[:200], data)

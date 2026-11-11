@@ -7,6 +7,7 @@ from app.database import get_db
 from app.auth import require_login
 from app.formatting import format_qty, format_inr, format_dt
 from app.models import Item, SalesOrder, PurchaseOrder, Customer, Vendor, User
+from app.confidential import visible, visible_docs
 from app.routers.sales import compute_payments_due
 
 router = APIRouter(tags=["dashboard"])
@@ -18,25 +19,25 @@ templates.env.filters["dt"] = format_dt
 
 @router.get("/")
 def dashboard(request: Request, db: Session = Depends(get_db), user: User = Depends(require_login)):
-    total_customers = db.query(func.count(Customer.id)).scalar()
-    total_vendors = db.query(func.count(Vendor.id)).scalar()
-    total_items = db.query(func.count(Item.id)).scalar()
+    total_customers = visible(db.query(func.count(Customer.id)), Customer, user, db).scalar()
+    total_vendors = visible(db.query(func.count(Vendor.id)), Vendor, user, db).scalar()
+    total_items = visible(db.query(func.count(Item.id)), Item, user, db).scalar()
 
     low_stock_items = (
-        db.query(Item)
+        visible(db.query(Item), Item, user, db)
         .filter(Item.is_active == True, Item.track_inventory == True, Item.current_stock <= Item.reorder_level)  # noqa: E712
         .order_by(Item.current_stock.asc())
         .limit(10)
         .all()
     )
 
-    recent_sales = db.query(SalesOrder).order_by(SalesOrder.created_at.desc()).limit(5).all()
-    recent_purchases = db.query(PurchaseOrder).order_by(PurchaseOrder.created_at.desc()).limit(5).all()
+    recent_sales = visible_docs(db.query(SalesOrder), SalesOrder, user, db).order_by(SalesOrder.created_at.desc()).limit(5).all()
+    recent_purchases = visible_docs(db.query(PurchaseOrder), PurchaseOrder, user, db).order_by(PurchaseOrder.created_at.desc()).limit(5).all()
 
-    open_sales = db.query(func.count(SalesOrder.id)).filter(SalesOrder.status.in_(["draft", "confirmed"])).scalar()
-    open_purchases = db.query(func.count(PurchaseOrder.id)).filter(PurchaseOrder.status.in_(["draft", "pending_approval", "pending_confirmation", "ordered", "partially_received"])).scalar()
+    open_sales = visible_docs(db.query(func.count(SalesOrder.id)), SalesOrder, user, db).filter(SalesOrder.status.in_(["draft", "confirmed"])).scalar()
+    open_purchases = visible_docs(db.query(func.count(PurchaseOrder.id)), PurchaseOrder, user, db).filter(PurchaseOrder.status.in_(["draft", "pending_approval", "pending_confirmation", "ordered", "partially_received"])).scalar()
 
-    payments_due_rows = compute_payments_due(db)[:5]
+    payments_due_rows = compute_payments_due(db, user)[:5]
 
     return templates.TemplateResponse(
         "dashboard.html",

@@ -21,14 +21,14 @@ from app.database import get_db
 from app.auth import require_module_permission, get_user_module_permissions, require_admin
 from app.formatting import format_qty, format_inr, format_money, format_price, format_dt, IST_OFFSET, CURRENCY_SYMBOLS, FREIGHT_GST_PERCENT, parse_freight as _parse_freight, parse_round_off as _parse_round_off, order_totals
 from app.models import (
-    PurchaseOrder, PurchaseOrderItem, Vendor, Item, StockTransaction, ItemSerial, User, Company,
+    PurchaseOrder, PurchaseOrderItem, SalesOrder, Vendor, Item, StockTransaction, ItemSerial, User, Company,
 )
 from app.requirements import compute_demand_map, on_order_qty, last_vendor
 from app.audit import diff_fields, log_field_changes, log_action
 from app.payments_service import queue_po_advance, BADGE as PAY_BADGE, STATUS_TEXT as PAY_STATUS_TEXT, mask
 from app.po_advances import ADVANCE_STATUSES, po_advance_summary, record_advance, advance_remaining
 from app.routers.bills import record_po_bill
-from app.confidential import guard_doc, visible, visible_docs
+from app.confidential import guard_doc, visible, visible_docs, can_see_confidential, CONFIDENTIAL_CLAUSE
 
 router = APIRouter(prefix="/purchase", tags=["purchase"], dependencies=[Depends(guard_doc(PurchaseOrder, "order_id"))])
 templates = Jinja2Templates(directory="app/templates")
@@ -81,7 +81,7 @@ def next_order_no(db: Session) -> str:
     return f"PO-{max_n + 1:05d}"
 
 
-def compute_global_requirements(db: Session):
+def compute_global_requirements(db: Session, user=None):
     """Company-wide "what do I need to order" — the one number this app
     gives you, rather than one that only looks at a single sales order in
     isolation (which would double-book stock that another open order is
@@ -102,12 +102,19 @@ def compute_global_requirements(db: Session):
     """
     demand, sources, exploded = compute_demand_map(db)
 
+    # Users who may not see confidential data: confidential items never appear, and the numbers of confidential
+    # sales orders are removed from the "driven by" lists.
+    hide = user is not None and not can_see_confidential(user, db)
+    hidden_order_nos = set()
+    if hide:
+        hidden_order_nos = {n for (n,) in db.query(SalesOrder.order_no).filter(CONFIDENTIAL_CLAUSE[SalesOrder]())}
+
     results = []
     for item_id, sales_demand in demand.items():
         if item_id in exploded:
             continue  # assemblies were broken down into their components above
         item = db.query(Item).get(item_id)
-        if not item or not item.track_inventory:
+        if not item or not item.track_inventory or (hide and item.is_confidential):
             continue
         buffer = float(item.reorder_level or 0)
         required = sales_demand + buffer
@@ -122,8 +129,8 @@ def compute_global_requirements(db: Session):
                 "in_stock": in_stock,
                 "on_order": on_order,
                 "shortfall": shortfall,
-                "orders": sorted(sources.get(item_id, set())),
-                "last_vendor": last_vendor(db, item_id),
+                "orders": sorted(sources.get(item_id, set()) - hidden_order_nos),
+                "last_vendor": (lambda v: None if (hide and v is not None and v.is_confidential) else v)(last_vendor(db, item_id)),
             })
 
     return sorted(results, key=lambda r: r["item"].name)
@@ -138,7 +145,7 @@ def list_purchase(request: Request, db: Session = Depends(get_db), user: User = 
 
 @router.get("/requirements")
 def purchase_requirements(request: Request, highlight: str = "", db: Session = Depends(get_db), user: User = Depends(require_module_permission("purchase", "view"))):
-    requirements = compute_global_requirements(db)
+    requirements = compute_global_requirements(db, user)
     perms = get_user_module_permissions(user, db, "purchase")
     return templates.TemplateResponse(
         "purchase/requirements.html",
@@ -154,7 +161,7 @@ def export_requirements(db: Session = Depends(get_db), user: User = Depends(requ
     are written as real numeric cells (not the |qty-formatted strings the
     HTML table shows) so the sheet can be summed/filtered/sorted directly in
     Excel rather than needing to be re-parsed from text."""
-    requirements = compute_global_requirements(db)
+    requirements = compute_global_requirements(db, user)
 
     wb = Workbook()
     ws = wb.active

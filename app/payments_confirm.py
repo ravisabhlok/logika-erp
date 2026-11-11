@@ -100,7 +100,7 @@ def parse_report(data):
     return rows, None
 
 
-def build_plan(db, rows, debit_acc):
+def build_plan(db, rows, debit_acc, hide_for=None):
     """Match each report row to one of the Downloaded payments. Returns {'items': [...], 'errors': [...]}.
     item = row + 'line' (PaymentLine or None) + 'outcome': paid / rejected / pending / already / conflict / unmatched."""
     errors = []
@@ -110,8 +110,24 @@ def build_plan(db, rows, debit_acc):
                       f"(***{debit_acc[-4:]}).")
     lines = (db.query(PaymentLine).filter(PaymentLine.status.in_(("Downloaded", "Confirmed")))
              .order_by(PaymentLine.exported_at, PaymentLine.id).all())
+    # A user who may not see confidential payments never matches, sees or settles them: report rows that belong to one
+    # are dropped from the plan entirely (so nothing about them is shown).
+    hidden = []
+    if hide_for is not None:
+        from app.confidential import CONFIDENTIAL_CLAUSE, can_see_confidential
+        if not can_see_confidential(hide_for, db):
+            hidden_ids = {i for (i,) in db.query(PaymentLine.id).filter(CONFIDENTIAL_CLAUSE[PaymentLine]())}
+            hidden = [ln for ln in lines if ln.id in hidden_ids]
+            lines = [ln for ln in lines if ln.id not in hidden_ids]
     used, items = set(), []
+    hidden_used = set()
     for r in rows:
+        if hidden and r["amount"] is not None:
+            secret = [ln for ln in hidden if ln.id not in hidden_used and norm_account(ln.account_no) == norm_account(r["account"])
+                      and Decimal(ln.amount) == r["amount"]]
+            if secret:
+                hidden_used.add(secret[0].id)
+                continue
         r = dict(r, line=None, outcome=r["kind"], note="")
         if r["amount"] is None:
             r["outcome"], r["note"] = "unmatched", "amount is not a number"

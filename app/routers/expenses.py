@@ -20,11 +20,12 @@ from sqlalchemy.orm import Session, joinedload
 from app.auth import require_module_permission, get_user_module_permissions
 from app.database import get_db
 from app.formatting import format_inr, format_dt
+from app.confidential import guard_doc, guard_path_param, visible, visible_docs
 from app.models import ExpenseEntry, ExpenseTemplate, Payee, PaymentLine, User
 from app.payments_service import BADGE, STATUS_TEXT, audit, mask, queue_expense
 from app.routers.payments import go, parse_amount, parse_date
 
-router = APIRouter(prefix="/expenses", tags=["expenses"])
+router = APIRouter(prefix="/expenses", tags=["expenses"], dependencies=[Depends(guard_doc(ExpenseEntry, "entry_id")), Depends(guard_doc(ExpenseTemplate, "tpl_id")), Depends(guard_path_param("payee_id", Payee))])
 templates = Jinja2Templates(directory="app/templates")
 templates.env.filters["inr"] = format_inr
 templates.env.filters["dt"] = format_dt
@@ -57,8 +58,9 @@ def due_date(year, month, day):
     return date(year, month, min(day, calendar.monthrange(year, month)[1]))
 
 
-def active_payees(db, include_id=None):
-    return [p for p in db.query(Payee).filter(Payee.is_deleted == False).order_by(Payee.name).all()  # noqa: E712
+def active_payees(db, include_id=None, user=None):
+    query = db.query(Payee) if user is None else visible(db.query(Payee), Payee, user, db)
+    return [p for p in query.filter(Payee.is_deleted == False).order_by(Payee.name).all()  # noqa: E712
             if p.is_active or p.id == include_id]
 
 
@@ -88,7 +90,7 @@ def index(request: Request, db: Session = Depends(get_db), user: User = Depends(
     perms = get_user_module_permissions(user, db, "payments")
     year, month = period(request)
     d_from, d_to = parse_date(request.query_params.get("from")), parse_date(request.query_params.get("to"))
-    q = db.query(ExpenseEntry).options(joinedload(ExpenseEntry.payee)).filter(ExpenseEntry.is_cancelled == False)  # noqa: E712
+    q = visible_docs(db.query(ExpenseEntry), ExpenseEntry, user, db).options(joinedload(ExpenseEntry.payee)).filter(ExpenseEntry.is_cancelled == False)  # noqa: E712
     if d_from or d_to:
         if d_from:
             q = q.filter(ExpenseEntry.due_date >= d_from)
@@ -99,7 +101,7 @@ def index(request: Request, db: Session = Depends(get_db), user: User = Depends(
         entries = q.order_by(ExpenseEntry.due_date.desc(), ExpenseEntry.id.desc()).limit(RECENT_LIMIT).all()
     prepared = {e.template_id for e in db.query(ExpenseEntry).filter_by(period_year=year, period_month=month, is_cancelled=False).all()
                 if e.template_id}
-    unprepared = [t for t in db.query(ExpenseTemplate).options(joinedload(ExpenseTemplate.payee)).filter_by(is_active=True).all()
+    unprepared = [t for t in visible_docs(db.query(ExpenseTemplate), ExpenseTemplate, user, db).options(joinedload(ExpenseTemplate.payee)).filter_by(is_active=True).all()
                   if t.id not in prepared]
     total = sum((Decimal(e.amount) for e in entries), Decimal(0))
     unpaid = sum((Decimal(e.amount) for e in entries if e.status != "Paid"), Decimal(0))
@@ -112,7 +114,7 @@ def index(request: Request, db: Session = Depends(get_db), user: User = Depends(
 
 @router.get("/add")
 def add_form(request: Request, db: Session = Depends(get_db), user: User = Depends(require_module_permission("payments", "edit"))):
-    return render(request, "expenses/entry_form.html", user, e=None, payees=active_payees(db), categories=CATEGORIES, today=date.today())
+    return render(request, "expenses/entry_form.html", user, e=None, payees=active_payees(db, user=user), categories=CATEGORIES, today=date.today())
 
 
 @router.post("/add")
@@ -150,7 +152,7 @@ def edit_form(entry_id: int, request: Request, db: Session = Depends(get_db), us
         return go("/expenses", "Expense not found", "error")
     if e.is_cancelled or e.status != "Pending":
         return go(idx(e.period_year, e.period_month), "Only an expense that is not yet sent for payment can be changed.", "error")
-    return render(request, "expenses/entry_form.html", user, e=e, payees=active_payees(db, e.payee_id), categories=CATEGORIES, today=date.today())
+    return render(request, "expenses/entry_form.html", user, e=e, payees=active_payees(db, e.payee_id, user), categories=CATEGORIES, today=date.today())
 
 
 @router.post("/{entry_id:int}/edit")
@@ -195,7 +197,7 @@ def cancel(entry_id: int, db: Session = Depends(get_db), user: User = Depends(re
 @router.get("/recurring")
 def recurring(request: Request, db: Session = Depends(get_db), user: User = Depends(require_module_permission("payments", "view"))):
     perms = get_user_module_permissions(user, db, "payments")
-    tpls = (db.query(ExpenseTemplate).options(joinedload(ExpenseTemplate.payee))
+    tpls = (visible_docs(db.query(ExpenseTemplate), ExpenseTemplate, user, db).options(joinedload(ExpenseTemplate.payee))
             .order_by(ExpenseTemplate.is_active.desc(), ExpenseTemplate.id).all())
     last = {}
     for e in db.query(ExpenseEntry).filter(ExpenseEntry.template_id.isnot(None), ExpenseEntry.is_cancelled == False).all():  # noqa: E712
@@ -210,7 +212,7 @@ def recurring_edit_form(tpl_id: int, request: Request, db: Session = Depends(get
     t = db.get(ExpenseTemplate, tpl_id)
     if t is None:
         return go("/expenses/recurring", "Recurring expense not found", "error")
-    return render(request, "expenses/template_form.html", user, t=t, payees=active_payees(db, t.payee_id), categories=CATEGORIES)
+    return render(request, "expenses/template_form.html", user, t=t, payees=active_payees(db, t.payee_id, user), categories=CATEGORIES)
 
 
 @router.post("/recurring/{tpl_id}/edit")
@@ -254,7 +256,7 @@ async def prepare(request: Request, db: Session = Depends(get_db), user: User = 
         year, month = date.today().year, date.today().month
     have = {e.template_id for e in db.query(ExpenseEntry).filter_by(period_year=year, period_month=month).all() if e.template_id}
     n = 0
-    for t in db.query(ExpenseTemplate).filter_by(is_active=True).order_by(ExpenseTemplate.id).all():
+    for t in visible_docs(db.query(ExpenseTemplate), ExpenseTemplate, user, db).filter_by(is_active=True).order_by(ExpenseTemplate.id).all():
         if t.id in have:
             continue
         e = ExpenseEntry(payee_id=t.payee_id, template_id=t.id, category=t.category, description=t.description, amount=t.amount,
@@ -286,7 +288,7 @@ async def send(request: Request, db: Session = Depends(get_db), user: User = Dep
     if pay_date is None:
         return go(back, "Choose the pay date.", "error")
     sent, skipped = 0, []
-    for e in db.query(ExpenseEntry).filter(ExpenseEntry.id.in_(ids)).all():
+    for e in visible_docs(db.query(ExpenseEntry), ExpenseEntry, user, db).filter(ExpenseEntry.id.in_(ids)).all():
         try:
             queue_expense(db, user, e, pay_date)
             sent += 1
