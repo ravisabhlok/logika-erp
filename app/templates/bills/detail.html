@@ -8,6 +8,7 @@
     <a href="/static/uploads/{{ bill.attachment_stored_filename }}" target="_blank" class="btn btn-outline-secondary btn-sm">View Attached Bill</a>
     {% endif %}
     {% if bill.status != 'cancelled' and perms.edit %}
+    <a href="/bills/{{ bill.id }}/edit" class="btn btn-outline-dark btn-sm">Edit</a>
     <form method="post" action="/bills/{{ bill.id }}/cancel" class="d-inline" onsubmit="return confirm('Cancel {{ bill.bill_ref }}?{{ ' This will reverse the stock and serials it added.' if bill.stock_updated else '' }}');">
       <button class="btn btn-outline-danger btn-sm">Cancel Bill</button>
     </form>

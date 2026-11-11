@@ -500,6 +500,97 @@ def bill_detail(bill_id: int, request: Request, db: Session = Depends(get_db), u
     )
 
 
+def _render_edit(request, user, bill, form_values=None, error=None, status_code=200):
+    values = form_values or {
+        "vendor_bill_no": bill.vendor_bill_no,
+        "bill_date": bill.bill_date.strftime("%Y-%m-%d"),
+        "due_date": bill.due_date.strftime("%Y-%m-%d") if bill.due_date else "",
+        "notes": bill.notes or "",
+    }
+    return templates.TemplateResponse(
+        "bills/edit.html",
+        {"request": request, "user": user, "bill": bill, "values": values, "error": error},
+        status_code=status_code,
+    )
+
+
+@router.get("/{bill_id}/edit")
+def edit_bill_form(bill_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(require_module_permission("bills", "edit"))):
+    bill = db.query(Bill).options(joinedload(Bill.vendor)).get(bill_id)
+    if not bill:
+        return RedirectResponse(url="/bills?error=Bill not found", status_code=303)
+    if bill.status == "cancelled":
+        return RedirectResponse(url=f"/bills/{bill_id}?error=A cancelled bill cannot be edited", status_code=303)
+    return _render_edit(request, user, bill)
+
+
+@router.post("/{bill_id}/edit")
+async def edit_bill(bill_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(require_module_permission("bills", "edit"))):
+    """Edit the document-level details of a bill: vendor's bill number, bill date, due date, notes and the attached
+    scan. Vendor, lines and amounts are deliberately not editable here — they drive stock, serials and payments
+    (cancel the bill and record a new one to change those)."""
+    bill = db.query(Bill).options(joinedload(Bill.vendor)).get(bill_id)
+    if not bill:
+        return RedirectResponse(url="/bills?error=Bill not found", status_code=303)
+    if bill.status == "cancelled":
+        return RedirectResponse(url=f"/bills/{bill_id}?error=A cancelled bill cannot be edited", status_code=303)
+
+    form = await request.form()
+    values = {
+        "vendor_bill_no": (form.get("vendor_bill_no") or "").strip(),
+        "bill_date": (form.get("bill_date") or "").strip(),
+        "due_date": (form.get("due_date") or "").strip(),
+        "notes": form.get("notes", ""),
+    }
+    if not values["vendor_bill_no"]:
+        return _render_edit(request, user, bill, values, "Enter the vendor's bill number.", 400)
+    try:
+        new_bill_date = _parse_date(values["bill_date"])
+        new_due_date = _parse_date(values["due_date"])
+    except ValueError:
+        return _render_edit(request, user, bill, values, "Enter valid dates.", 400)
+    if new_bill_date is None:
+        return _render_edit(request, user, bill, values, "Bill date is required.", 400)
+
+    changes = []
+    if values["vendor_bill_no"] != bill.vendor_bill_no:
+        changes.append(f"bill no {bill.vendor_bill_no} -> {values['vendor_bill_no']}")
+        bill.vendor_bill_no = values["vendor_bill_no"]
+    if new_bill_date != bill.bill_date:
+        changes.append(f"bill date {bill.bill_date:%d-%b-%Y} -> {new_bill_date:%d-%b-%Y}")
+        bill.bill_date = new_bill_date
+    if new_due_date != bill.due_date:
+        changes.append("due date changed")
+        bill.due_date = new_due_date
+    if (values["notes"] or "") != (bill.notes or ""):
+        changes.append("notes changed")
+        bill.notes = values["notes"] or None
+
+    upload = form.get("attachment")
+    if upload is not None and getattr(upload, "filename", ""):
+        kind = _attachment_kind(upload.filename)
+        if not kind:
+            return _render_edit(request, user, bill, values, "Attach an image (jpg, png, gif, webp) or a PDF.", 400)
+        os.makedirs(ATTACHMENT_DIR, exist_ok=True)
+        stored_filename = f"{uuid.uuid4().hex}{kind}"
+        with open(os.path.join(ATTACHMENT_DIR, stored_filename), "wb") as f:
+            f.write(await upload.read())
+        old_file = bill.attachment_stored_filename
+        bill.attachment_original_filename = upload.filename
+        bill.attachment_stored_filename = stored_filename
+        if old_file:
+            try:
+                os.remove(os.path.join(ATTACHMENT_DIR, old_file))
+            except OSError:
+                pass
+        changes.append("attachment replaced")
+
+    if changes:
+        log_action(db, user, "bill", bill.id, bill.bill_ref, "edit", summary="; ".join(changes))
+        db.commit()
+    return RedirectResponse(url=f"/bills/{bill_id}?success={quote('Bill updated.' if changes else 'No changes.')}", status_code=303)
+
+
 @router.post("/{bill_id}/send-payment")
 async def send_for_bank_payment(
     bill_id: int, request: Request,
