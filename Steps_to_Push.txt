@@ -8,6 +8,8 @@ On the office server (SSH in as yourself, then):
 
 cd /opt/logika-erp
 sudo -u erp git pull origin main
+sudo systemctl restart logika-erp
+
 sudo -u erp ./venv/bin/alembic upgrade head
 
 sudo systemctl restart logika-erp

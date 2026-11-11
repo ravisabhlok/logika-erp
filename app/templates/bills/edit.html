@@ -52,10 +52,31 @@
       </tbody>
     </table>
     <p class="text-muted small mb-0">
-      Set a quantity to 0 to drop a line. This only corrects the bill itself &mdash; stock was already updated when the
-      purchase order was received, and is not changed here. The new total can't be less than what is already paid.
+      Set a quantity to 0 to drop a line. The new total can't be less than what is already paid.
+      {% if bill.stock_updated %}
+      This bill added stock directly, so changing a quantity also adds or removes the difference in stock (refused if
+      that stock has already been used). Serial-tracked items can change price only.
+      {% else %}
+      This only corrects the bill itself &mdash; stock was already updated when the purchase order was received, and is
+      not changed here.
+      {% endif %}
     </p>
     {% else %}
+    <h6 class="mt-4">Lines</h6>
+    <table class="table table-sm align-middle">
+      <thead><tr><th>Item</th><th class="text-end">Qty</th><th class="text-end">Unit price</th><th class="text-end">GST %</th><th class="text-end">Total</th></tr></thead>
+      <tbody>
+      {% for bi in bill.items %}
+        <tr>
+          <td>{{ bi.item.name }}</td>
+          <td class="text-end">{{ bi.quantity|qty }}</td>
+          <td class="text-end">{{ bi.unit_price|inr }}</td>
+          <td class="text-end">{{ '%.2f'|format(bi.gst_percentage or 0) }}</td>
+          <td class="text-end">{{ bi.total|inr }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
     <p class="text-muted small mt-3 mb-0">
       This bill added stock directly, so its vendor, items and amounts can't be edited here. To change those,
       remove any payments, cancel this bill and record a new one.

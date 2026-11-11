@@ -510,7 +510,7 @@ def _render_edit(request, user, bill, form_values=None, error=None, status_code=
     return templates.TemplateResponse(
         "bills/edit.html",
         {"request": request, "user": user, "bill": bill, "values": values, "error": error,
-         "lines_editable": bill.purchase_order_id is not None and not bill.stock_updated,
+         "lines_editable": True,
          "line_values": line_values or {}},
         status_code=status_code,
     )
@@ -529,9 +529,10 @@ def edit_bill_form(bill_id: int, request: Request, db: Session = Depends(get_db)
 @router.post("/{bill_id}/edit")
 async def edit_bill(bill_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(require_module_permission("bills", "edit"))):
     """Edit the document-level details of a bill: vendor's bill number, bill date, due date, notes and the attached
-    scan. For a PO-based bill (document-level, never moved stock) the line quantities/prices can be corrected too, as
-    long as the new total isn't below what is already paid or queued. A direct (no-PO) bill moved stock and serials, so
-    its lines stay locked — cancel it and record a new one."""
+    scan. Line quantities/prices can be corrected too, as long as the new total isn't below what is already paid or
+    queued. A PO-based bill is document-level (never moved stock). A direct (no-PO) bill did add stock, so changing a
+    quantity adds/removes the difference in stock (logged as bill_edit) and is refused if that stock is already used;
+    serial-tracked lines can change price only."""
     bill = (
         db.query(Bill)
         .options(joinedload(Bill.vendor), joinedload(Bill.items).joinedload(BillItem.item), joinedload(Bill.payments))
@@ -562,7 +563,7 @@ async def edit_bill(bill_id: int, request: Request, db: Session = Depends(get_db
     # Line quantities / prices — only for a bill raised against a PO (document-level: stock was already moved by the
     # PO's receipt, so changing a line here never touches stock). A quantity of 0 drops the line.
     changes = []
-    if bill.purchase_order_id is not None and not bill.stock_updated and form.getlist("bill_item_id"):
+    if form.getlist("bill_item_id"):
         submitted = {}
         for bid, qty_s, price_s in zip(form.getlist("bill_item_id"), form.getlist("quantity"), form.getlist("unit_price")):
             submitted[bid] = {"quantity": qty_s, "unit_price": price_s}
@@ -579,7 +580,22 @@ async def edit_bill(bill_id: int, request: Request, db: Session = Depends(get_db
             if qty < 0 or price < 0:
                 bad = f"Quantity and price for {bi.item.name} can't be negative."
                 break
+            if bill.stock_updated and bi.item.has_serial and abs(qty - float(bi.quantity)) > 1e-9:
+                bad = (f"{bi.item.name} is serial-tracked, so its quantity can't be changed here "
+                       f"(only the price). Cancel the bill and record it again to change serials.")
+                break
             parsed[bi.id] = (qty, price)
+        stock_delta = {}
+        if not bad and bill.stock_updated:
+            for bi in bill.items:
+                if bi.id in parsed and bi.item.track_inventory:
+                    stock_delta[bi.item_id] = stock_delta.get(bi.item_id, 0.0) + (parsed[bi.id][0] - float(bi.quantity))
+            for bi in bill.items:
+                d = stock_delta.get(bi.item_id, 0.0)
+                if d < -1e-9 and float(bi.item.current_stock or 0) + d < -1e-9:
+                    bad = (f"Can't reduce {bi.item.name} by {-d:g}: only {float(bi.item.current_stock or 0):g} in stock "
+                           f"(the rest has already been used).")
+                    break
         keep = [bi for bi in bill.items if bi.id not in parsed or parsed[bi.id][0] > 0]
         if not bad and not keep:
             bad = "A bill needs at least one line. Cancel the bill instead if it was recorded by mistake."
@@ -600,6 +616,17 @@ async def edit_bill(bill_id: int, request: Request, db: Session = Depends(get_db
             return _render_edit(request, user, bill, values, bad, 400, line_values=submitted)
         line_changes = []
         old_total = float(bill.total_amount or 0)
+        for item_id, d in stock_delta.items():
+            if abs(d) < 1e-9:
+                continue
+            item = next(bi.item for bi in bill.items if bi.item_id == item_id)
+            item.current_stock = float(item.current_stock or 0) + d
+            db.add(StockTransaction(
+                item_id=item_id, transaction_type="IN" if d > 0 else "OUT", quantity=abs(d),
+                reference_type="bill_edit", reference_id=bill.id,
+                notes=f"{bill.bill_ref} edited — stock {'added' if d > 0 else 'reversed'}",
+            ))
+            line_changes.append(f"stock of {item.name} {d:+g}")
         for bi in list(bill.items):
             if bi.id not in parsed:
                 continue
