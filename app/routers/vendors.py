@@ -10,10 +10,11 @@ from app.database import get_db
 from app.audit import log_action
 from app.auth import require_module_permission, get_user_module_permissions
 from app.formatting import format_inr, format_dt
+from app.confidential import guard_path_param, visible
 from app.models import Vendor, PurchaseOrder, User
 from app.payments_service import mask
 
-router = APIRouter(prefix="/vendors", tags=["vendors"])
+router = APIRouter(prefix="/vendors", tags=["vendors"], dependencies=[Depends(guard_path_param("vendor_id", Vendor))])
 templates = Jinja2Templates(directory="app/templates")
 templates.env.filters["inr"] = format_inr
 templates.env.filters["dt"] = format_dt
@@ -37,7 +38,7 @@ def _apply_bank_details(vendor: Vendor, bank_name: str, account_no: str, ifsc: s
 
 @router.get("")
 def list_vendors(request: Request, db: Session = Depends(get_db), user: User = Depends(require_module_permission("vendors", "view"))):
-    vendors = db.query(Vendor).order_by(Vendor.name).all()
+    vendors = visible(db.query(Vendor), Vendor, user, db).order_by(Vendor.name).all()
     perms = get_user_module_permissions(user, db, "vendors")
     return templates.TemplateResponse("vendors/list.html", {"request": request, "user": user, "vendors": vendors, "perms": perms})
 
@@ -59,12 +60,14 @@ def create_vendor(
     bank_name: str = Form(""),
     bank_account_no: str = Form(""),
     bank_ifsc: str = Form(""),
+    is_confidential: str = Form(""),
     db: Session = Depends(get_db),
     user: User = Depends(require_module_permission("vendors", "add")),
 ):
     vendor = Vendor(
         name=name, contact_person=contact_person, email=email,
         phone=phone, address=address, gstin=gstin,
+        is_confidential=(user.role == "admin" and is_confidential == "on"),
     )
     if user.role == "admin":  # bank details: admin only
         error = _apply_bank_details(vendor, bank_name, bank_account_no, bank_ifsc)
@@ -110,6 +113,7 @@ def update_vendor(
     bank_name: str = Form(""),
     bank_account_no: str = Form(""),
     bank_ifsc: str = Form(""),
+    is_confidential: str = Form(""),
     db: Session = Depends(get_db),
     user: User = Depends(require_module_permission("vendors", "edit")),
 ):
@@ -128,6 +132,8 @@ def update_vendor(
     vendor.phone = phone
     vendor.address = address
     vendor.gstin = gstin
+    if user.role == "admin":
+        vendor.is_confidential = is_confidential == "on"
     db.commit()
     return RedirectResponse(url=f"/vendors/{vendor_id}?success=Vendor updated", status_code=303)
 

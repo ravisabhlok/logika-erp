@@ -44,6 +44,11 @@
       but has no effect anywhere else yet. Admin users always have full access regardless of this table.
     </div>
 
+    <div class="form-check mb-3">
+      <input class="form-check-input" type="checkbox" name="can_view_confidential" id="canViewConf" {% if role and role.can_view_confidential %}checked{% endif %}>
+      <label class="form-check-label" for="canViewConf"><strong>View confidential</strong> &mdash; can see customers, vendors, payees and items marked Confidential, and everything belonging to them (e.g. for the CA / Auditor).</label>
+    </div>
+
     <button type="submit" class="btn btn-dark">Save</button>
     <a href="/roles" class="btn btn-link">Cancel</a>
   </form>

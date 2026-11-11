@@ -88,6 +88,7 @@ async def create_role(
     user: User = Depends(require_admin),
 ):
     role = Role(name=name.strip())
+    role.can_view_confidential = (await request.form()).get("can_view_confidential") == "on"
     role.permissions = await build_permissions(request)
     db.add(role)
     db.flush()  # need role.id before logging
@@ -125,6 +126,10 @@ async def update_role(
         for p in role.permissions
     ]  # detached copies — role.permissions itself is about to be deleted below
     role.name = name.strip()
+    old_conf = bool(role.can_view_confidential)
+    role.can_view_confidential = (await request.form()).get("can_view_confidential") == "on"
+    if old_conf != role.can_view_confidential:
+        log_field_changes(db, user, "role", role.id, role.name, {"can_view_confidential": (str(old_conf), str(role.can_view_confidential))})
     new_permissions = await build_permissions(request)
     # Delete the old rows and flush before inserting the new ones — replacing
     # `role.permissions` in one shot can make SQLAlchemy try to insert the

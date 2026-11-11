@@ -1,0 +1,8 @@
+{% macro confidential_field(user, obj) %}
+{% if user.role == 'admin' %}
+<div class="form-check mb-3">
+  <input class="form-check-input" type="checkbox" name="is_confidential" id="isConfidential" {% if obj and obj.is_confidential %}checked{% endif %}>
+  <label class="form-check-label" for="isConfidential">Confidential <span class="text-muted small">&mdash; hidden from staff unless their role has "View confidential"</span></label>
+</div>
+{% endif %}
+{% endmacro %}

@@ -18,8 +18,9 @@ from app.models import (
 )
 from app.requirements import item_sales_demand, on_order_qty
 from app.audit import diff_fields, log_field_changes, log_action
+from app.confidential import guard_path_param, visible, require_visible
 
-router = APIRouter(prefix="/items", tags=["items"])
+router = APIRouter(prefix="/items", tags=["items"], dependencies=[Depends(guard_path_param("item_id", Item))])
 templates = Jinja2Templates(directory="app/templates")
 templates.env.filters["qty"] = format_qty
 templates.env.filters["inr"] = format_inr
@@ -113,7 +114,7 @@ def list_items(
     db: Session = Depends(get_db),
     user: User = Depends(require_module_permission("items", "view")),
 ):
-    query = db.query(Item)
+    query = visible(db.query(Item), Item, user, db)
     # AND filter: item must carry every selected category tag (e.g. Sensor + Spare).
     for cat_name in category:
         query = query.filter(Item.categories.any(Category.name == cat_name))
@@ -140,8 +141,9 @@ def new_item_form(
     user: User = Depends(require_module_permission("items", "add")),
 ):
     categories = db.query(Category).order_by(Category.name).all()
-    possible_components = db.query(Item).filter(Item.is_active == True).order_by(Item.name).all()  # noqa: E712
+    possible_components = visible(db.query(Item), Item, user, db).filter(Item.is_active == True).order_by(Item.name).all()  # noqa: E712
     clone_source = db.query(Item).get(clone_from) if clone_from else None
+    require_visible(clone_source, user, db)
     return templates.TemplateResponse(
         "items/form.html",
         {
@@ -167,6 +169,7 @@ async def create_item(
     has_serial: bool = Form(False),
     is_assembly: bool = Form(False),
     track_inventory: bool = Form(False),
+    is_confidential: str = Form(""),
     db: Session = Depends(get_db),
     user: User = Depends(require_module_permission("items", "add")),
 ):
@@ -182,6 +185,7 @@ async def create_item(
         purchase_price=purchase_price, sales_price=sales_price,
         reorder_level=reorder_level, current_stock=current_stock,
         has_serial=has_serial, is_assembly=is_assembly, track_inventory=track_inventory,
+        is_confidential=(user.role == "admin" and is_confidential == "on"),
     )
     if is_assembly:
         item.bom_components = build_bom_components(
@@ -298,6 +302,7 @@ async def update_item(
     is_assembly: bool = Form(False),
     track_inventory: bool = Form(False),
     is_active: bool = Form(False),
+    is_confidential: str = Form(""),
     db: Session = Depends(get_db),
     user: User = Depends(require_module_permission("items", "edit")),
 ):
@@ -347,6 +352,10 @@ async def update_item(
         if is_assembly else []
     )
     item.is_active = is_active
+    if user.role == "admin":
+        if item.is_confidential != (is_confidential == "on"):
+            changes["is_confidential"] = (str(bool(item.is_confidential)), str(is_confidential == "on"))
+        item.is_confidential = is_confidential == "on"
 
     new_category_names = sorted(c.name for c in item.categories)
     if new_category_names != old_category_names:

@@ -23,6 +23,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.confidential import visible, require_visible
 from app.auth import require_login, get_user_module_permissions, PermissionDeniedException
 from app.formatting import format_inr
 from app.models import (
@@ -162,11 +163,11 @@ def ledger_index(
     if kind not in allowed:
         kind = next(iter(allowed))
     if kind == "customer":
-        parties = db.query(Customer).order_by(Customer.name).all()
+        parties = visible(db.query(Customer), Customer, user, db).order_by(Customer.name).all()
     elif kind == "vendor":
-        parties = db.query(Vendor).order_by(Vendor.name).all()
+        parties = visible(db.query(Vendor), Vendor, user, db).order_by(Vendor.name).all()
     else:
-        parties = db.query(Payee).filter(Payee.is_deleted == False).order_by(Payee.name).all()  # noqa: E712
+        parties = visible(db.query(Payee), Payee, user, db).filter(Payee.is_deleted == False).order_by(Payee.name).all()  # noqa: E712
 
     sign = _sign(kind)
     rows = []
@@ -207,6 +208,7 @@ def ledger_detail(
     party = _party(db, kind, party_id)
     if not party:
         return templates.TemplateResponse("403.html", {"request": request, "user": user}, status_code=404)
+    require_visible(party, user, db)
 
     sign = _sign(kind)
     d_from, d_to = _parse(date_from), _parse(date_to)

@@ -6,9 +6,10 @@ from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
 from app.auth import require_login, require_module_permission, get_user_module_permissions
 from app.formatting import format_inr, format_dt
+from app.confidential import guard_path_param, visible
 from app.models import Customer, CustomerAddress, SalesOrder, User
 
-router = APIRouter(prefix="/customers", tags=["customers"])
+router = APIRouter(prefix="/customers", tags=["customers"], dependencies=[Depends(guard_path_param("customer_id", Customer))])
 templates = Jinja2Templates(directory="app/templates")
 templates.env.filters["inr"] = format_inr
 templates.env.filters["dt"] = format_dt
@@ -16,7 +17,7 @@ templates.env.filters["dt"] = format_dt
 
 @router.get("")
 def list_customers(request: Request, db: Session = Depends(get_db), user: User = Depends(require_module_permission("customers", "view"))):
-    customers = db.query(Customer).order_by(Customer.name).all()
+    customers = visible(db.query(Customer), Customer, user, db).order_by(Customer.name).all()
     perms = get_user_module_permissions(user, db, "customers")
     return templates.TemplateResponse("customers/list.html", {"request": request, "user": user, "customers": customers, "perms": perms})
 
@@ -40,6 +41,7 @@ def create_customer(
     country: str = Form(""),
     gstin: str = Form(""),
     category: str = Form(""),
+    is_confidential: str = Form(""),
     db: Session = Depends(get_db),
     user: User = Depends(require_module_permission("customers", "add")),
 ):
@@ -47,6 +49,7 @@ def create_customer(
         name=name, nickname=nickname or None, contact_person=contact_person, email=email,
         phone=phone, address=address, city=city or None, state=state or None,
         country=country or None, gstin=gstin, category=category or None,
+        is_confidential=(user.role == "admin" and is_confidential == "on"),
     )
     db.add(customer)
     db.commit()
@@ -90,6 +93,7 @@ def update_customer(
     country: str = Form(""),
     gstin: str = Form(""),
     category: str = Form(""),
+    is_confidential: str = Form(""),
     db: Session = Depends(get_db),
     user: User = Depends(require_module_permission("customers", "edit")),
 ):
@@ -105,6 +109,8 @@ def update_customer(
     customer.country = country or None
     customer.gstin = gstin
     customer.category = category or None
+    if user.role == "admin":
+        customer.is_confidential = is_confidential == "on"
     db.commit()
     return RedirectResponse(url=f"/customers/{customer_id}?success=Customer updated", status_code=303)
 

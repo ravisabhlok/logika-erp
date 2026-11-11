@@ -63,6 +63,8 @@ class Role(Base):
 
     id = Column(Integer, primary_key=True)
     name = Column(String(100), unique=True, nullable=False)
+    # May see records marked is_confidential (see app/confidential.py). Admins always can.
+    can_view_confidential = Column(Boolean, default=False, server_default="0", nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     users = relationship("User", back_populates="permission_role")
@@ -104,6 +106,7 @@ class Customer(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String(200), nullable=False)
     nickname = Column(String(100), nullable=True)
+    is_confidential = Column(Boolean, default=False, server_default="0", nullable=False)
     contact_person = Column(String(150))
     email = Column(String(120))
     phone = Column(String(50))
@@ -163,6 +166,7 @@ class Vendor(Base):
 
     id = Column(Integer, primary_key=True)
     name = Column(String(200), nullable=False)
+    is_confidential = Column(Boolean, default=False, server_default="0", nullable=False)
     contact_person = Column(String(150))
     email = Column(String(120))
     phone = Column(String(30))
@@ -201,6 +205,7 @@ class Item(Base):
 
     id = Column(Integer, primary_key=True)
     name = Column(String(200), nullable=False)
+    is_confidential = Column(Boolean, default=False, server_default="0", nullable=False)
     description = Column(Text, nullable=True)
     small_description = Column(String(255), nullable=True)
     unit = Column(String(20), default="Nos")
@@ -988,6 +993,7 @@ class Payee(Base):
 
     id = Column(Integer, primary_key=True)
     name = Column(String(150), nullable=False)
+    is_confidential = Column(Boolean, default=False, server_default="0", nullable=False)
     nickname = Column(String(60), nullable=True)
     category = Column(String(20), nullable=False, default="Other")
     bank_name = Column(String(60), nullable=True)

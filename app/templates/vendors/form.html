@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_confidential.html" import confidential_field %}
 {% block title %}{{ "Edit" if vendor else "New" }} Vendor{% endblock %}
 {% block content %}
 <h4 class="mb-3">{{ "Edit" if vendor else "New" }} Vendor</h4>
@@ -45,6 +46,7 @@
         <input type="text" name="bank_ifsc" class="form-control" value="{{ (vendor.bank_ifsc or '') if vendor else '' }}" {{ '' if user.role == 'admin' else 'readonly' }}>
       </div>
     </div>
+    {{ confidential_field(user, vendor) }}
     <button type="submit" class="btn btn-dark">Save</button>
     <a href="/vendors" class="btn btn-link">Cancel</a>
   </form>

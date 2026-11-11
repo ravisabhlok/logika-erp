@@ -27,13 +27,14 @@ from sqlalchemy.orm import Session
 
 from app.auth import require_module_permission, get_user_module_permissions
 from app.database import get_db
+from app.confidential import guard_path_param, visible
 from app.formatting import format_inr, format_dt
 from app.models import Bill, Company, ExpenseEntry, Payee, PaymentBatch, PaymentConfirmation, PaymentLine, PurchaseOrder, User
 from app.payments_confirm import apply_plan, build_plan, parse_report
 from app.payments_export import build_bank_file, mode_for
 from app.payments_service import BADGE, STATUS_TEXT, audit, lines_for_payee, mask, queue_payee, sync_source
 
-router = APIRouter(prefix="/payments", tags=["payments"])
+router = APIRouter(prefix="/payments", tags=["payments"], dependencies=[Depends(guard_path_param("payee_id", Payee))])
 templates = Jinja2Templates(directory="app/templates")
 templates.env.filters["inr"] = format_inr
 templates.env.filters["dt"] = format_dt
@@ -570,7 +571,7 @@ def read_payee_form(form):
 @router.get("/payees")
 def payees(request: Request, db: Session = Depends(get_db), user: User = Depends(require_module_permission("payments", "view"))):
     perms = get_user_module_permissions(user, db, "payments")
-    rows = db.query(Payee).filter_by(is_deleted=False).order_by(Payee.name).all()
+    rows = visible(db.query(Payee), Payee, user, db).filter_by(is_deleted=False).order_by(Payee.name).all()
     return render(request, "payments/payees.html", user, payees=rows, perms=perms,
                   success=request.query_params.get("success"), error=request.query_params.get("error"))
 
@@ -592,6 +593,7 @@ async def payee_add(request: Request, db: Session = Depends(get_db), user: User 
     if not is_admin(user):  # bank details: admin only
         data.update(bank_name=None, account_no=None, ifsc=None)
         note = " Bank details can be added only by an admin - the payee was saved without them."
+    data["is_confidential"] = is_admin(user) and form.get("is_confidential") == "on"
     p = Payee(**data)
     db.add(p)
     db.flush()
@@ -653,6 +655,8 @@ async def payee_edit(payee_id: int, request: Request, db: Session = Depends(get_
         if (data["bank_name"], data["account_no"], data["ifsc"]) != (p.bank_name, p.account_no, p.ifsc):
             note = " Bank details can be changed only by an admin - they were left as they were."
         data.update(bank_name=p.bank_name, account_no=p.account_no, ifsc=p.ifsc)
+    if is_admin(user):
+        data["is_confidential"] = form.get("is_confidential") == "on"
     audit(db, user, "payee", p.id, p.name, "update",
           f"{data['name']} / {data['category']} / a/c {mask(p.account_no)} -> {mask(data['account_no'])} / active={data['is_active']}")
     for k, v in data.items():
