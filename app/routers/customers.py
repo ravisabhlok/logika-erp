@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
 from app.auth import require_login, require_module_permission, get_user_module_permissions
 from app.formatting import format_inr, format_dt
-from app.confidential import guard_path_param, visible
+from app.confidential import guard_path_param, visible, visible_docs
 from app.models import Customer, CustomerAddress, SalesOrder, User
 
 router = APIRouter(prefix="/customers", tags=["customers"], dependencies=[Depends(guard_path_param("customer_id", Customer))])
@@ -60,7 +60,7 @@ def create_customer(
 def view_customer(customer_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(require_module_permission("customers", "view"))):
     customer = db.query(Customer).options(joinedload(Customer.addresses)).get(customer_id)
     recent_orders = (
-        db.query(SalesOrder)
+        visible_docs(db.query(SalesOrder), SalesOrder, user, db)
         .filter(SalesOrder.customer_id == customer_id)
         .order_by(SalesOrder.order_date.desc())
         .limit(10)

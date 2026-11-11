@@ -23,8 +23,9 @@ from app.auth import require_module_permission, get_user_module_permissions
 from app.formatting import format_qty, format_inr, format_dt
 from app.models import Invoice, InvoiceItem, SalesOrder, SalesOrderItem, Item, ItemSerial, StockTransaction, User, Company
 from app.audit import diff_fields, log_field_changes, log_action
+from app.confidential import guard_doc, visible_docs
 
-router = APIRouter(prefix="/invoices", tags=["invoices"])
+router = APIRouter(prefix="/invoices", tags=["invoices"], dependencies=[Depends(guard_doc(Invoice, "invoice_id")), Depends(guard_doc(SalesOrder, "sales_order_id"))])
 templates = Jinja2Templates(directory="app/templates")
 templates.env.filters["qty"] = format_qty
 templates.env.filters["inr"] = format_inr
@@ -199,7 +200,7 @@ def _bill_ship_dict_from_invoice(invoice: Invoice) -> tuple[dict, dict]:
 @router.get("")
 def list_invoices(request: Request, db: Session = Depends(get_db), user: User = Depends(require_module_permission("invoices", "view"))):
     invoices = (
-        db.query(Invoice)
+        visible_docs(db.query(Invoice), Invoice, user, db)
         .options(joinedload(Invoice.sales_order).joinedload(SalesOrder.customer))
         .order_by(Invoice.created_at.desc())
         .all()

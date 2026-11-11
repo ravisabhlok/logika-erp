@@ -33,8 +33,9 @@ from app.models import (
 from app.audit import log_action
 from app.payments_service import BADGE, STATUS_TEXT, bill_summary, mask, queue_bill
 from app.po_advances import apply_po_advances
+from app.confidential import guard_doc, visible, visible_docs
 
-router = APIRouter(prefix="/bills", tags=["bills"])
+router = APIRouter(prefix="/bills", tags=["bills"], dependencies=[Depends(guard_doc(Bill, "bill_id")), Depends(guard_doc(PurchaseOrder, "po_id"))])
 templates = Jinja2Templates(directory="app/templates")
 templates.env.filters["qty"] = format_qty
 templates.env.filters["inr"] = format_inr
@@ -202,7 +203,7 @@ def unbilled_qty_by_po_line(db: Session, order: PurchaseOrder) -> dict:
 @router.get("")
 def list_bills(request: Request, db: Session = Depends(get_db), user: User = Depends(require_module_permission("bills", "view"))):
     bills = (
-        db.query(Bill)
+        visible_docs(db.query(Bill), Bill, user, db)
         .options(joinedload(Bill.vendor), joinedload(Bill.purchase_order))
         .order_by(Bill.bill_date.desc(), Bill.id.desc())
         .all()
@@ -233,8 +234,8 @@ def new_bill_form(
             )
         unbilled = unbilled_qty_by_po_line(db, order)
 
-    vendors = db.query(Vendor).order_by(Vendor.name).all()
-    items = db.query(Item).filter(Item.is_active == True).order_by(Item.name).all()  # noqa: E712
+    vendors = visible(db.query(Vendor), Vendor, user, db).order_by(Vendor.name).all()
+    items = visible(db.query(Item), Item, user, db).filter(Item.is_active == True).order_by(Item.name).all()  # noqa: E712
     return templates.TemplateResponse(
         "bills/new.html",
         {
@@ -452,8 +453,8 @@ async def create_bill(
 
 
 async def _rerender_new_form(request, db, user, order, errors, form):
-    vendors = db.query(Vendor).order_by(Vendor.name).all()
-    items = db.query(Item).filter(Item.is_active == True).order_by(Item.name).all()  # noqa: E712
+    vendors = visible(db.query(Vendor), Vendor, user, db).order_by(Vendor.name).all()
+    items = visible(db.query(Item), Item, user, db).filter(Item.is_active == True).order_by(Item.name).all()  # noqa: E712
     submitted = {
         "vendor_id": form.get("vendor_id", ""),
         "vendor_bill_no": form.get("vendor_bill_no", ""),

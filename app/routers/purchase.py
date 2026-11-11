@@ -28,8 +28,9 @@ from app.audit import diff_fields, log_field_changes, log_action
 from app.payments_service import queue_po_advance, BADGE as PAY_BADGE, STATUS_TEXT as PAY_STATUS_TEXT, mask
 from app.po_advances import ADVANCE_STATUSES, po_advance_summary, record_advance, advance_remaining
 from app.routers.bills import record_po_bill
+from app.confidential import guard_doc, visible, visible_docs
 
-router = APIRouter(prefix="/purchase", tags=["purchase"])
+router = APIRouter(prefix="/purchase", tags=["purchase"], dependencies=[Depends(guard_doc(PurchaseOrder, "order_id"))])
 templates = Jinja2Templates(directory="app/templates")
 templates.env.filters["qty"] = format_qty
 templates.env.filters["inr"] = format_inr
@@ -130,7 +131,7 @@ def compute_global_requirements(db: Session):
 
 @router.get("")
 def list_purchase(request: Request, db: Session = Depends(get_db), user: User = Depends(require_module_permission("purchase", "view"))):
-    orders = db.query(PurchaseOrder).options(joinedload(PurchaseOrder.vendor)).order_by(PurchaseOrder.created_at.desc()).all()
+    orders = visible_docs(db.query(PurchaseOrder), PurchaseOrder, user, db).options(joinedload(PurchaseOrder.vendor)).order_by(PurchaseOrder.created_at.desc()).all()
     perms = get_user_module_permissions(user, db, "purchase")
     return templates.TemplateResponse("purchase/list.html", {"request": request, "user": user, "orders": orders, "perms": perms})
 
@@ -202,8 +203,8 @@ def export_requirements(db: Session = Depends(get_db), user: User = Depends(requ
 
 @router.get("/new")
 def new_purchase_form(request: Request, db: Session = Depends(get_db), user: User = Depends(require_module_permission("purchase", "add"))):
-    vendors = db.query(Vendor).order_by(Vendor.name).all()
-    items = db.query(Item).filter(Item.is_active == True).order_by(Item.name).all()  # noqa: E712
+    vendors = visible(db.query(Vendor), Vendor, user, db).order_by(Vendor.name).all()
+    items = visible(db.query(Item), Item, user, db).filter(Item.is_active == True).order_by(Item.name).all()  # noqa: E712
     return templates.TemplateResponse(
         "purchase/form.html",
         {
@@ -403,12 +404,12 @@ def edit_purchase_form(order_id: int, request: Request, db: Session = Depends(ge
             status_code=303,
         )
 
-    vendors = db.query(Vendor).order_by(Vendor.name).all()
+    vendors = visible(db.query(Vendor), Vendor, user, db).order_by(Vendor.name).all()
     # Include any item already on this order even if it's since been marked
     # inactive, so its line doesn't silently disappear from the picker.
     order_item_ids = [line.item_id for line in order.items]
     items = (
-        db.query(Item)
+        visible(db.query(Item), Item, user, db)
         .filter(or_(Item.is_active == True, Item.id.in_(order_item_ids)))  # noqa: E712
         .order_by(Item.name)
         .all()

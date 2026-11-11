@@ -10,7 +10,7 @@ from app.database import get_db
 from app.audit import log_action
 from app.auth import require_module_permission, get_user_module_permissions
 from app.formatting import format_inr, format_dt
-from app.confidential import guard_path_param, visible
+from app.confidential import guard_path_param, visible, visible_docs
 from app.models import Vendor, PurchaseOrder, User
 from app.payments_service import mask
 
@@ -82,7 +82,7 @@ def create_vendor(
 def view_vendor(vendor_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(require_module_permission("vendors", "view"))):
     vendor = db.query(Vendor).get(vendor_id)
     recent_orders = (
-        db.query(PurchaseOrder)
+        visible_docs(db.query(PurchaseOrder), PurchaseOrder, user, db)
         .filter(PurchaseOrder.vendor_id == vendor_id)
         .order_by(PurchaseOrder.order_date.desc())
         .limit(10)

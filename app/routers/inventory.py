@@ -11,8 +11,9 @@ from app.formatting import format_qty, format_dt
 from app.models import Item, StockTransaction, ItemSerial, User
 from app.audit import log_action
 from app.requirements import on_order_map
+from app.confidential import guard_doc
 
-router = APIRouter(prefix="/inventory", tags=["inventory"])
+router = APIRouter(prefix="/inventory", tags=["inventory"], dependencies=[Depends(guard_doc(Item, "item_id"))])
 templates = Jinja2Templates(directory="app/templates")
 templates.env.filters["qty"] = format_qty
 templates.env.filters["dt"] = format_dt

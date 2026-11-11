@@ -9,8 +9,9 @@ from app.database import get_db
 from app.auth import require_module_permission, get_user_module_permissions
 from app.formatting import format_qty, format_dt
 from app.models import ProductionOrder, ProductionOrderComponent, Item, StockTransaction, ItemSerial, User
+from app.confidential import guard_doc, visible, visible_docs
 
-router = APIRouter(prefix="/production", tags=["production"])
+router = APIRouter(prefix="/production", tags=["production"], dependencies=[Depends(guard_doc(ProductionOrder, "order_id")), Depends(guard_doc(Item, "item_id"))])
 templates = Jinja2Templates(directory="app/templates")
 templates.env.filters["qty"] = format_qty
 templates.env.filters["dt"] = format_dt
@@ -23,7 +24,7 @@ def next_order_no(db: Session) -> str:
 
 @router.get("")
 def list_production(request: Request, db: Session = Depends(get_db), user: User = Depends(require_module_permission("production", "view"))):
-    orders = db.query(ProductionOrder).options(joinedload(ProductionOrder.item)).order_by(ProductionOrder.created_at.desc()).all()
+    orders = visible_docs(db.query(ProductionOrder), ProductionOrder, user, db).options(joinedload(ProductionOrder.item)).order_by(ProductionOrder.created_at.desc()).all()
     perms = get_user_module_permissions(user, db, "production")
     return templates.TemplateResponse("production/list.html", {"request": request, "user": user, "orders": orders, "perms": perms})
 
@@ -31,7 +32,7 @@ def list_production(request: Request, db: Session = Depends(get_db), user: User 
 @router.get("/new")
 def new_production_form(request: Request, item_id: int = None, db: Session = Depends(get_db), user: User = Depends(require_module_permission("production", "add"))):
     assemblies = (
-        db.query(Item)
+        visible(db.query(Item), Item, user, db)
         .filter(Item.is_assembly == True, Item.is_active == True)  # noqa: E712
         .order_by(Item.name)
         .all()

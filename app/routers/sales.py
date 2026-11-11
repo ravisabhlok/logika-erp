@@ -15,8 +15,9 @@ from app.auth import require_login, require_module_permission, get_user_module_p
 from app.formatting import format_qty, format_inr, format_dt, FREIGHT_GST_PERCENT, parse_freight as _parse_freight, parse_round_off as _parse_round_off, order_totals
 from app.models import SalesOrder, SalesOrderItem, SalesOrderPaymentTerm, Customer, Item, StockTransaction, User, Company
 from app.audit import diff_fields, log_field_changes, log_action
+from app.confidential import guard_doc, visible, visible_docs, can_see_confidential, CONFIDENTIAL_CLAUSE
 
-router = APIRouter(prefix="/sales", tags=["sales"])
+router = APIRouter(prefix="/sales", tags=["sales"], dependencies=[Depends(guard_doc(SalesOrder, "order_id"))])
 templates = Jinja2Templates(directory="app/templates")
 templates.env.filters["qty"] = format_qty
 templates.env.filters["inr"] = format_inr
@@ -129,15 +130,15 @@ def _build_payment_term(row: dict) -> SalesOrderPaymentTerm:
 
 @router.get("")
 def list_sales(request: Request, db: Session = Depends(get_db), user: User = Depends(require_module_permission("sales", "view"))):
-    orders = db.query(SalesOrder).options(joinedload(SalesOrder.customer)).order_by(SalesOrder.created_at.desc()).all()
+    orders = visible_docs(db.query(SalesOrder), SalesOrder, user, db).options(joinedload(SalesOrder.customer)).order_by(SalesOrder.created_at.desc()).all()
     perms = get_user_module_permissions(user, db, "sales")
     return templates.TemplateResponse("sales/list.html", {"request": request, "user": user, "orders": orders, "perms": perms})
 
 
 @router.get("/new")
 def new_sales_form(request: Request, db: Session = Depends(get_db), user: User = Depends(require_module_permission("sales", "add"))):
-    customers = db.query(Customer).order_by(Customer.name).all()
-    items = db.query(Item).filter(Item.is_active == True).order_by(Item.name).all()  # noqa: E712
+    customers = visible(db.query(Customer), Customer, user, db).order_by(Customer.name).all()
+    items = visible(db.query(Item), Item, user, db).filter(Item.is_active == True).order_by(Item.name).all()  # noqa: E712
     return templates.TemplateResponse(
         "sales/form.html",
         {
@@ -167,8 +168,8 @@ async def create_sales_order(request: Request, db: Session = Depends(get_db), us
     # paste in the number from Zoho (or wherever) to keep the two in sync.
     # Still has to be unique here since orders are looked up by it elsewhere.
     if order_no and db.query(SalesOrder).filter(SalesOrder.order_no == order_no).first():
-        customers = db.query(Customer).order_by(Customer.name).all()
-        items = db.query(Item).filter(Item.is_active == True).order_by(Item.name).all()  # noqa: E712
+        customers = visible(db.query(Customer), Customer, user, db).order_by(Customer.name).all()
+        items = visible(db.query(Item), Item, user, db).filter(Item.is_active == True).order_by(Item.name).all()  # noqa: E712
         submitted = {
             "customer_id": customer_id, "order_no": order_no, "notes": notes,
             "freight_amount": form.get("freight_amount", ""), "round_off_amount": form.get("round_off_amount", ""),
@@ -290,7 +291,7 @@ def item_suggestions(item_ids: str = "", db: Session = Depends(get_db), user: Us
     if not suggested_ids:
         return []
 
-    items = db.query(Item).filter(Item.id.in_(suggested_ids), Item.is_active == True).all()  # noqa: E712
+    items = visible(db.query(Item), Item, user, db).filter(Item.id.in_(suggested_ids), Item.is_active == True).all()  # noqa: E712
     items_by_id = {i.id: i for i in items}
     # Preserve the co-occurrence ranking (the query above), not query result order.
     ordered = [items_by_id[i] for i in suggested_ids if i in items_by_id]
@@ -300,15 +301,18 @@ def item_suggestions(item_ids: str = "", db: Session = Depends(get_db), user: Us
     ]
 
 
-def compute_payments_due(db: Session):
+def compute_payments_due(db: Session, user=None):
     """Every pending payment milestone across confirmed/delivered sales
     orders, earliest due date first — rows with no due date set yet (e.g.
     'after warranty', before the order's even been delivered) sort to the
     end rather than disappearing, since they still represent money owed,
     just not yet dated. Draft orders are excluded (not a firm commitment
     yet); cancelled orders never will be."""
+    base = db.query(SalesOrderPaymentTerm)
+    if user is not None and not can_see_confidential(user, db):
+        base = base.filter(~SalesOrderPaymentTerm.sales_order.has(CONFIDENTIAL_CLAUSE[SalesOrder]()))
     terms = (
-        db.query(SalesOrderPaymentTerm)
+        base
         .join(SalesOrder, SalesOrder.id == SalesOrderPaymentTerm.sales_order_id)
         .options(joinedload(SalesOrderPaymentTerm.sales_order).joinedload(SalesOrder.customer))
         .filter(SalesOrder.status.in_(["confirmed", "delivered"]), SalesOrderPaymentTerm.status == "pending")
@@ -327,7 +331,7 @@ def payments_due(request: Request, db: Session = Depends(get_db), user: User = D
     """NOTE: registered before GET /{order_id} — same reason as
     /item-suggestions above (a literal one-segment path would otherwise be
     swallowed by "/{order_id}" and fail trying to cast "payments-due" to int)."""
-    rows = compute_payments_due(db)
+    rows = compute_payments_due(db, user)
     total_due = sum(float(r["term"].amount) for r in rows)
     perms = get_user_module_permissions(user, db, "sales")
     return templates.TemplateResponse(
@@ -440,12 +444,12 @@ def edit_sales_form(order_id: int, request: Request, db: Session = Depends(get_d
     if order.status not in ("draft", "confirmed", "cancelled"):
         return RedirectResponse(url=f"/sales/{order_id}?error=Delivered orders can't be edited — line items would no longer match the stock already moved", status_code=303)
 
-    customers = db.query(Customer).order_by(Customer.name).all()
+    customers = visible(db.query(Customer), Customer, user, db).order_by(Customer.name).all()
     # Include any item already on this order even if it's since been marked
     # inactive, so its line doesn't silently disappear from the picker.
     order_item_ids = [line.item_id for line in order.items]
     items = (
-        db.query(Item)
+        visible(db.query(Item), Item, user, db)
         .filter(or_(Item.is_active == True, Item.id.in_(order_item_ids)))  # noqa: E712
         .order_by(Item.name)
         .all()
@@ -497,10 +501,10 @@ async def update_sales_order(order_id: int, request: Request, db: Session = Depe
     unit_prices = form.getlist("unit_price")
 
     if order_no and db.query(SalesOrder).filter(SalesOrder.order_no == order_no, SalesOrder.id != order_id).first():
-        customers = db.query(Customer).order_by(Customer.name).all()
+        customers = visible(db.query(Customer), Customer, user, db).order_by(Customer.name).all()
         order_item_ids = [line.item_id for line in order.items]
         items = (
-            db.query(Item)
+            visible(db.query(Item), Item, user, db)
             .filter(or_(Item.is_active == True, Item.id.in_(order_item_ids)))  # noqa: E712
             .order_by(Item.name)
             .all()

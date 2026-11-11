@@ -52,3 +52,92 @@ def guard_path_param(param: str, model):
             return
         require_visible(obj, user, db)
     return dependency
+
+
+# ---------------------------------------------------------------------------
+# Documents (orders, invoices, bills ...) follow their party and their items:
+# a document is confidential when its customer / vendor is, or when any of its
+# line items is. Each clause below is a SQL condition that is TRUE for a
+# confidential document, so lists use `~clause` and guards use `clause`.
+# ---------------------------------------------------------------------------
+from sqlalchemy import or_  # noqa: E402
+
+from app.models import (  # noqa: E402
+    Bill, BillItem, Customer, Invoice, InvoiceItem, Item, Payee, ProductionOrder, ProductionOrderComponent,
+    PurchaseOrder, PurchaseOrderItem, SalesOrder, SalesOrderItem, Vendor,
+)
+
+
+def _conf_sales_order():
+    return or_(
+        SalesOrder.customer.has(Customer.is_confidential == True),  # noqa: E712
+        SalesOrder.ship_to_customer.has(Customer.is_confidential == True),  # noqa: E712
+        SalesOrder.items.any(SalesOrderItem.item.has(Item.is_confidential == True)),  # noqa: E712
+    )
+
+
+def _conf_invoice():
+    return or_(
+        Invoice.sales_order.has(_conf_sales_order()),
+        Invoice.items.any(InvoiceItem.item.has(Item.is_confidential == True)),  # noqa: E712
+    )
+
+
+def _conf_purchase_order():
+    return or_(
+        PurchaseOrder.vendor.has(Vendor.is_confidential == True),  # noqa: E712
+        PurchaseOrder.items.any(PurchaseOrderItem.item.has(Item.is_confidential == True)),  # noqa: E712
+    )
+
+
+def _conf_bill():
+    return or_(
+        Bill.vendor.has(Vendor.is_confidential == True),  # noqa: E712
+        Bill.items.any(BillItem.item.has(Item.is_confidential == True)),  # noqa: E712
+        Bill.purchase_order.has(_conf_purchase_order()),
+    )
+
+
+def _conf_production():
+    return or_(
+        ProductionOrder.item.has(Item.is_confidential == True),  # noqa: E712
+        ProductionOrder.components.any(ProductionOrderComponent.component_item.has(Item.is_confidential == True)),  # noqa: E712
+    )
+
+
+CONFIDENTIAL_CLAUSE = {
+    SalesOrder: _conf_sales_order,
+    Invoice: _conf_invoice,
+    PurchaseOrder: _conf_purchase_order,
+    Bill: _conf_bill,
+    ProductionOrder: _conf_production,
+    Customer: lambda: Customer.is_confidential == True,  # noqa: E712
+    Vendor: lambda: Vendor.is_confidential == True,  # noqa: E712
+    Item: lambda: Item.is_confidential == True,  # noqa: E712
+    Payee: lambda: Payee.is_confidential == True,  # noqa: E712
+}
+
+
+def visible_docs(query, model, user: User, db: Session):
+    """Like `visible`, but for documents that are confidential through their party or items."""
+    if can_see_confidential(user, db):
+        return query
+    return query.filter(~CONFIDENTIAL_CLAUSE[model]())
+
+
+def guard_doc(model, param: str):
+    """Router-level dependency: a route with `{param}` in its path (or ?param=) is refused when that record is
+    confidential and the user can't see confidential data."""
+    def dependency(request: Request, user: User = Depends(require_login), db: Session = Depends(get_db)) -> None:
+        raw = request.path_params.get(param) or request.query_params.get(param)
+        if not raw:
+            return
+        try:
+            record_id = int(raw)
+        except (TypeError, ValueError):
+            return
+        if can_see_confidential(user, db):
+            return
+        if db.query(model.id).filter(model.id == record_id, CONFIDENTIAL_CLAUSE[model]()).first():
+            raise PermissionDeniedException("confidential records", "view")
+    return dependency
