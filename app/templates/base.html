@@ -110,6 +110,9 @@
           </a>
         </div>
       </div>
+      <a href="/ledger" class="nav-item {{ 'active' if request.url.path.startswith('/ledger') else '' }}">
+        <i class="bi bi-journal-text"></i><span>Party Ledgers</span>
+      </a>
       <a href="/production" class="nav-item {{ 'active' if request.url.path.startswith('/production') else '' }}">
         <i class="bi bi-gear-wide-connected"></i><span>Production</span>
       </a>
