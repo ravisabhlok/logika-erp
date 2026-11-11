@@ -17,7 +17,7 @@ reorder level entered with 3+ decimals will get rounded to 2 the next time
 that item is edited and saved, even if the field itself isn't touched.
 """
 from datetime import timedelta
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP, ROUND_DOWN
 
 # Every `datetime.utcnow()` default in models.py (created_at, order_date,
 # transaction_date, uploaded_at, received_at, ...) stores a real UTC instant.
@@ -61,6 +61,22 @@ def format_qty(value) -> str:
     if "." in s:
         s = s.rstrip("0").rstrip(".")
     return s or "0"
+
+
+def format_price(value, currency: str = "INR") -> str:
+    """Unit price for display: normal 2-decimal money format, plus the extra
+    3rd/4th decimals only when the stored price really has them (e.g. 36.0656
+    for 11,000 / 305 m). Display only."""
+    if value is None:
+        return format_money(0, currency)
+    try:
+        d = Decimal(str(value))
+    except InvalidOperation:
+        return str(value)
+    d = d.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+    base = format_money(d.quantize(Decimal("0.01"), rounding=ROUND_DOWN), currency)
+    extra = format(d, "f").split(".")[1][2:].rstrip("0") if "." in format(d, "f") else ""
+    return base + extra
 
 
 def format_inr(value) -> str:

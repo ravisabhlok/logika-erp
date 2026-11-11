@@ -56,7 +56,7 @@
           <div class="fs-5">{{ bill.gst_amount|inr }}</div>
         </div>
         <div class="col">
-          <div class="text-muted small">Total</div>
+          <div class="text-muted small">Total{% if bill.round_off_amount %} <span class="text-muted">(incl. round off {{ bill.round_off_amount|inr }})</span>{% endif %}</div>
           <div class="fs-5 fw-bold">{{ bill.total_amount|inr }}</div>
         </div>
         <div class="col">
@@ -82,7 +82,7 @@
       <tr>
         <td>{{ line.item.name }}</td>
         <td class="text-end">{{ line.quantity|qty }}</td>
-        <td class="text-end">{{ line.unit_price|inr }}</td>
+        <td class="text-end">{{ line.unit_price|price }}</td>
         <td class="text-end">{{ line.gst_percentage|qty }}</td>
         <td class="text-end">{{ line.total|inr }}</td>
         <td>

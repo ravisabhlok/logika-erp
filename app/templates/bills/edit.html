@@ -30,6 +30,11 @@
         <input type="file" name="attachment" class="form-control" accept=".jpg,.jpeg,.png,.gif,.webp,.pdf">
         {% if bill.attachment_original_filename %}<div class="form-text">Current: {{ bill.attachment_original_filename }}</div>{% endif %}
       </div>
+      <div class="col-md-6">
+        <label class="form-label">Round off (+/-)</label>
+        <input type="number" name="round_off_amount" step="0.01" class="form-control" placeholder="e.g. -1.35" value="{{ values.round_off_amount }}">
+        <div class="form-text">Added to the total so it matches the vendor's bill.</div>
+      </div>
       <div class="col-12">
         <label class="form-label">Notes</label>
         <textarea name="notes" class="form-control" rows="2">{{ values.notes }}</textarea>
@@ -45,7 +50,7 @@
         <tr>
           <td>{{ bi.item.name }}<input type="hidden" name="bill_item_id" value="{{ bi.id }}"></td>
           <td><input type="number" name="quantity" step="any" min="0" class="form-control form-control-sm" value="{{ lv.quantity if lv else bi.quantity|qty }}"></td>
-          <td><input type="number" name="unit_price" step="0.01" min="0" class="form-control form-control-sm" value="{{ lv.unit_price if lv else '%.2f'|format(bi.unit_price) }}"></td>
+          <td><input type="number" name="unit_price" step="any" min="0" class="form-control form-control-sm" value="{{ lv.unit_price if lv else ('%.4f'|format(bi.unit_price)).rstrip('0').rstrip('.') }}"></td>
           <td class="text-end">{{ '%.2f'|format(bi.gst_percentage or 0) }}</td>
         </tr>
       {% endfor %}
@@ -70,7 +75,7 @@
         <tr>
           <td>{{ bi.item.name }}</td>
           <td class="text-end">{{ bi.quantity|qty }}</td>
-          <td class="text-end">{{ bi.unit_price|inr }}</td>
+          <td class="text-end">{{ bi.unit_price|price }}</td>
           <td class="text-end">{{ '%.2f'|format(bi.gst_percentage or 0) }}</td>
           <td class="text-end">{{ bi.total|inr }}</td>
         </tr>

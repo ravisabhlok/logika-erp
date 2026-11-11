@@ -669,7 +669,7 @@ class PurchaseOrderItem(Base):
     purchase_order_id = Column(Integer, ForeignKey("purchase_orders.id"), nullable=False)
     item_id = Column(Integer, ForeignKey("items.id"), nullable=False)
     quantity = Column(Numeric(14, 4), nullable=False)
-    unit_price = Column(Numeric(12, 2), nullable=False)
+    unit_price = Column(Numeric(14, 4), nullable=False)
     total = Column(Numeric(14, 2), nullable=False)
     # Per-line, not per-order: unlike SalesOrder.expected_shipment_date (one
     # date for the whole order), a single PO commonly bundles items from
@@ -750,6 +750,9 @@ class Bill(Base):
 
     taxable_amount = Column(Numeric(14, 2), default=0)
     gst_amount = Column(Numeric(14, 2), default=0)
+    # Manual +/- adjustment so the bill total matches the vendor's printed total
+    # (e.g. unit price 36.0656 x 305 m shown as 36.07 on the invoice).
+    round_off_amount = Column(Numeric(14, 2), default=0, server_default="0", nullable=False)
     total_amount = Column(Numeric(14, 2), default=0, nullable=False)
     amount_paid = Column(Numeric(14, 2), default=0, nullable=False)
 
@@ -796,7 +799,7 @@ class BillItem(Base):
     purchase_order_item_id = Column(Integer, ForeignKey("purchase_order_items.id"), nullable=True)
     item_id = Column(Integer, ForeignKey("items.id"), nullable=False)
     quantity = Column(Numeric(14, 4), nullable=False)
-    unit_price = Column(Numeric(12, 2), nullable=False)
+    unit_price = Column(Numeric(14, 4), nullable=False)
     gst_percentage = Column(Numeric(5, 2), nullable=True, default=0)
     hsn_code = Column(String(10), nullable=True)
     total = Column(Numeric(14, 2), nullable=False)

@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
 from app.auth import require_module_permission, get_user_module_permissions
-from app.formatting import format_qty, format_inr, format_dt
+from app.formatting import format_qty, format_inr, format_dt, format_price, parse_round_off
 from app.models import (
     Bill, BillItem, BillPayment, PurchaseOrder, PurchaseOrderItem, Vendor,
     Item, ItemSerial, StockTransaction, User,
@@ -38,6 +38,7 @@ router = APIRouter(prefix="/bills", tags=["bills"])
 templates = Jinja2Templates(directory="app/templates")
 templates.env.filters["qty"] = format_qty
 templates.env.filters["inr"] = format_inr
+templates.env.filters["price"] = format_price
 templates.env.filters["dt"] = format_dt
 
 # Same flat-folder-on-disk pattern as ItemAttachment (app/routers/items.py) —
@@ -145,7 +146,7 @@ def record_po_bill(
         qty = po_line.quantity if quantities is None else quantities.get(po_line.id, 0)
         if not qty or float(qty) <= 0:
             continue
-        line_total = float(qty) * float(po_line.unit_price)
+        line_total = round(float(qty) * float(po_line.unit_price), 2)
         gst_pct = float(po_line.item.gst_percentage or 0)
         taxable_total += line_total
         gst_total += line_total * gst_pct / 100
@@ -310,7 +311,7 @@ async def create_bill(
                 continue
             if qty <= 0:
                 continue
-            line_total = qty * unit_price
+            line_total = round(qty * unit_price, 2)
             gst_pct = float(po_line.item.gst_percentage or 0)
             taxable_total += line_total
             gst_total += line_total * gst_pct / 100
@@ -377,7 +378,7 @@ async def create_bill(
 
         for line in parsed_lines:
             item = line["item"]
-            line_total = line["qty"] * line["unit_price"]
+            line_total = round(line["qty"] * line["unit_price"], 2)
             gst_pct = float(item.gst_percentage or 0)
             taxable_total += line_total
             gst_total += line_total * gst_pct / 100
@@ -388,9 +389,11 @@ async def create_bill(
             bill.items.append(bill_item)
         bill.stock_updated = True
 
-    bill.taxable_amount = taxable_total
-    bill.gst_amount = gst_total
-    bill.total_amount = taxable_total + gst_total
+    round_off = parse_round_off(form.get("round_off_amount"))
+    bill.taxable_amount = round(taxable_total, 2)
+    bill.gst_amount = round(gst_total, 2)
+    bill.round_off_amount = round_off
+    bill.total_amount = round(taxable_total + gst_total + round_off, 2)
 
     # Attachment — optional. Same save-to-disk pattern as items.py's
     # upload_attachments; unsupported types are silently skipped rather
@@ -457,6 +460,7 @@ async def _rerender_new_form(request, db, user, order, errors, form):
         "bill_date": form.get("bill_date", ""),
         "due_date": form.get("due_date", ""),
         "notes": form.get("notes", ""),
+        "round_off_amount": form.get("round_off_amount", ""),
         "lines": [],
     }
     if order:
@@ -506,6 +510,7 @@ def _render_edit(request, user, bill, form_values=None, error=None, status_code=
         "bill_date": bill.bill_date.strftime("%Y-%m-%d"),
         "due_date": bill.due_date.strftime("%Y-%m-%d") if bill.due_date else "",
         "notes": bill.notes or "",
+        "round_off_amount": float(bill.round_off_amount or 0) or "",
     }
     return templates.TemplateResponse(
         "bills/edit.html",
@@ -549,7 +554,9 @@ async def edit_bill(bill_id: int, request: Request, db: Session = Depends(get_db
         "bill_date": (form.get("bill_date") or "").strip(),
         "due_date": (form.get("due_date") or "").strip(),
         "notes": form.get("notes", ""),
+        "round_off_amount": (form.get("round_off_amount") or "").strip(),
     }
+    new_round = parse_round_off(values["round_off_amount"])
     if not values["vendor_bill_no"]:
         return _render_edit(request, user, bill, values, "Enter the vendor's bill number.", 400)
     try:
@@ -600,14 +607,10 @@ async def edit_bill(bill_id: int, request: Request, db: Session = Depends(get_db
         if not bad and not keep:
             bad = "A bill needs at least one line. Cancel the bill instead if it was recorded by mistake."
         if not bad:
-            taxable = sum(
-                (parsed[bi.id][0] * parsed[bi.id][1]) if bi.id in parsed else float(bi.total) for bi in keep
-            )
-            gst = sum(
-                ((parsed[bi.id][0] * parsed[bi.id][1]) if bi.id in parsed else float(bi.total)) * float(bi.gst_percentage or 0) / 100
-                for bi in keep
-            )
-            new_total = round(taxable + gst, 2)
+            line_amt = {bi.id: (round(parsed[bi.id][0] * parsed[bi.id][1], 2) if bi.id in parsed else float(bi.total)) for bi in keep}
+            taxable = sum(line_amt.values())
+            gst = sum(line_amt[bi.id] * float(bi.gst_percentage or 0) / 100 for bi in keep)
+            new_total = round(taxable + gst + new_round, 2)
             committed = float(bill.amount_paid or 0) + float(bill_summary(db, bill)["in_progress"])
             if new_total + 0.005 < committed:
                 bad = (f"New total {new_total:,.2f} is less than the {committed:,.2f} already paid or sent for bank "
@@ -638,12 +641,16 @@ async def edit_bill(bill_id: int, request: Request, db: Session = Depends(get_db
                 continue
             if abs(qty - float(bi.quantity)) > 1e-9 or abs(price - float(bi.unit_price)) > 1e-9:
                 line_changes.append(f"{bi.item.name} {float(bi.quantity):g}x{float(bi.unit_price):g} -> {qty:g}x{price:g}")
-                bi.quantity, bi.unit_price, bi.total = qty, price, qty * price
-        if line_changes:
-            bill.taxable_amount = sum(float(bi.total) for bi in bill.items)
-            bill.gst_amount = sum(float(bi.total) * float(bi.gst_percentage or 0) / 100 for bi in bill.items)
-            bill.total_amount = float(bill.taxable_amount) + float(bill.gst_amount)
+                bi.quantity, bi.unit_price, bi.total = qty, price, round(qty * price, 2)
+        round_changed = abs(new_round - float(bill.round_off_amount or 0)) > 1e-9
+        if line_changes or round_changed:
+            bill.round_off_amount = new_round
+            bill.taxable_amount = round(sum(float(bi.total) for bi in bill.items), 2)
+            bill.gst_amount = round(sum(float(bi.total) * float(bi.gst_percentage or 0) / 100 for bi in bill.items), 2)
+            bill.total_amount = round(float(bill.taxable_amount) + float(bill.gst_amount) + new_round, 2)
             recompute_bill_status(bill)
+            if round_changed:
+                line_changes.append(f"round off {new_round:+.2f}")
             changes.append("lines: " + ", ".join(line_changes) + f" (total {old_total:,.2f} -> {float(bill.total_amount):,.2f})")
 
     if values["vendor_bill_no"] != bill.vendor_bill_no:

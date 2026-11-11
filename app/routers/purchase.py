@@ -19,7 +19,7 @@ from xhtml2pdf import pisa
 
 from app.database import get_db
 from app.auth import require_module_permission, get_user_module_permissions, require_admin
-from app.formatting import format_qty, format_inr, format_money, format_dt, IST_OFFSET, CURRENCY_SYMBOLS, FREIGHT_GST_PERCENT, parse_freight as _parse_freight, parse_round_off as _parse_round_off, order_totals
+from app.formatting import format_qty, format_inr, format_money, format_price, format_dt, IST_OFFSET, CURRENCY_SYMBOLS, FREIGHT_GST_PERCENT, parse_freight as _parse_freight, parse_round_off as _parse_round_off, order_totals
 from app.models import (
     PurchaseOrder, PurchaseOrderItem, Vendor, Item, StockTransaction, ItemSerial, User, Company,
 )
@@ -34,6 +34,7 @@ templates = Jinja2Templates(directory="app/templates")
 templates.env.filters["qty"] = format_qty
 templates.env.filters["inr"] = format_inr
 templates.env.filters["money"] = format_money
+templates.env.filters["price"] = format_price
 templates.env.filters["dt"] = format_dt
 
 
@@ -257,7 +258,7 @@ async def create_purchase_order(request: Request, db: Session = Depends(get_db),
             continue
         price = float(price_str) if price_str else 0
         item = db.query(Item).get(int(item_id_str))
-        line_total = price * qty
+        line_total = round(price * qty, 2)
         total += line_total
         gst_total += line_total * float(item.gst_percentage or 0) / 100
         order.items.append(PurchaseOrderItem(
@@ -491,7 +492,7 @@ async def update_purchase_order(order_id: int, request: Request, db: Session = D
             continue
         price = float(price_str) if price_str else 0
         item = db.query(Item).get(int(item_id_str))
-        line_total = price * qty
+        line_total = round(price * qty, 2)
         total += line_total
         gst_total += line_total * float(item.gst_percentage or 0) / 100
         order.items.append(PurchaseOrderItem(

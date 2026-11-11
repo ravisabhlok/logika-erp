@@ -170,7 +170,7 @@
         <td class="text-end">{{ line.received_quantity|qty }}</td>
         <td class="text-end">{% if line.pending_quantity > 0 %}<span class="badge bg-{{ 'secondary' if order.short_closed_at else 'warning text-dark' }}">{{ line.pending_quantity|qty }}</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
         {% endif %}
-        <td class="text-end">{{ line.unit_price|money(order.currency) }}</td>
+        <td class="text-end">{{ line.unit_price|price(order.currency) }}</td>
         <td class="text-end">{{ line.total|money(order.currency) }}</td>
         <td>{% if line.expected_delivery_date %}{{ line.expected_delivery_date.strftime('%d-%b-%Y') }}{% else %}<span class="text-muted">-</span>{% endif %}</td>
         <td>

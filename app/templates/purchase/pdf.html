@@ -146,7 +146,7 @@ DOWNLOADABLE_PURCHASE_STATUSES in app/routers/purchase.py).
       <td class="item-name">{{ line.item.name }}</td>
       <td>{{ line.item.hsn_code or "-" }}</td>
       <td class="text-end">{{ line.quantity|qty }}</td>
-      <td class="text-end">{{ line.unit_price|money(order.currency) }}</td>
+      <td class="text-end">{{ line.unit_price|price(order.currency) }}</td>
       <td class="text-end">{{ line.total|money(order.currency) }}</td>
       <td>{{ line.expected_delivery_date.strftime('%d-%b-%Y') if line.expected_delivery_date else "-" }}</td>
     </tr>
