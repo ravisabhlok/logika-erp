@@ -7,6 +7,7 @@
     {% if customer.nickname %}<div class="text-muted">{{ customer.nickname }}</div>{% endif %}
   </div>
   <div>
+    <a href="/ledger/customer/{{ customer.id }}" class="btn btn-outline-dark btn-sm">Ledger</a>
     {% if perms.edit %}
     <a href="/customers/{{ customer.id }}/edit" class="btn btn-outline-secondary btn-sm">Edit</a>
     {% endif %}

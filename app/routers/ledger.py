@@ -23,7 +23,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.auth import require_module_permission
+from app.auth import require_login, get_user_module_permissions, PermissionDeniedException
 from app.formatting import format_inr
 from app.models import (
     Customer, Vendor, Payee, SalesOrder, SalesOrderPaymentTerm, Invoice, Bill, BillPayment,
@@ -40,6 +40,20 @@ KINDS = {
     "payee": "Payees",
 }
 ZERO = Decimal("0")
+
+# A party's ledger is visible to whoever can view that party: Customers / Vendors
+# permission for those two, Bank Payments (which owns Payees) for payees.
+KIND_MODULE = {"customer": "customers", "vendor": "vendors", "payee": "payments"}
+KIND_LABEL = {"customer": "Customers", "vendor": "Vendors", "payee": "Bank Payments"}
+
+
+def _allowed_kinds(db: Session, user: User) -> dict:
+    return {k: v for k, v in KINDS.items() if get_user_module_permissions(user, db, KIND_MODULE[k]).get("view")}
+
+
+def _require_kind(db: Session, user: User, kind: str):
+    if not get_user_module_permissions(user, db, KIND_MODULE[kind]).get("view"):
+        raise PermissionDeniedException(KIND_LABEL[kind], "view")
 
 
 def _d(value) -> date:
@@ -140,10 +154,13 @@ def _party(db: Session, kind: str, pid: int):
 @router.get("")
 def ledger_index(
     request: Request, kind: str = "customer", show_zero: int = 0,
-    db: Session = Depends(get_db), user: User = Depends(require_module_permission("payments", "view")),
+    db: Session = Depends(get_db), user: User = Depends(require_login),
 ):
-    if kind not in KINDS:
-        kind = "customer"
+    allowed = _allowed_kinds(db, user)
+    if not allowed:
+        raise PermissionDeniedException("Customers, Vendors or Bank Payments", "view")
+    if kind not in allowed:
+        kind = next(iter(allowed))
     if kind == "customer":
         parties = db.query(Customer).order_by(Customer.name).all()
     elif kind == "vendor":
@@ -165,7 +182,7 @@ def ledger_index(
         total_dr += dr
         total_cr += cr
     return templates.TemplateResponse("ledger/index.html", {
-        "request": request, "user": user, "kind": kind, "kinds": KINDS, "rows": rows,
+        "request": request, "user": user, "kind": kind, "kinds": allowed, "rows": rows,
         "total_dr": total_dr, "total_cr": total_cr, "total_bal": (total_dr - total_cr) * sign,
         "show_zero": show_zero,
         "bal_label": "Receivable" if kind == "customer" else "Payable",
@@ -182,10 +199,11 @@ def _parse(s: str):
 @router.get("/{kind}/{party_id}")
 def ledger_detail(
     request: Request, kind: str, party_id: int, date_from: str = "", date_to: str = "",
-    db: Session = Depends(get_db), user: User = Depends(require_module_permission("payments", "view")),
+    db: Session = Depends(get_db), user: User = Depends(require_login),
 ):
     if kind not in KINDS:
         return templates.TemplateResponse("403.html", {"request": request, "user": user}, status_code=404)
+    _require_kind(db, user, kind)
     party = _party(db, kind, party_id)
     if not party:
         return templates.TemplateResponse("403.html", {"request": request, "user": user}, status_code=404)

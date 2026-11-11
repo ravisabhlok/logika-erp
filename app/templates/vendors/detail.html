@@ -4,6 +4,7 @@
 <div class="d-flex justify-content-between align-items-start mb-3">
   <h4 class="mb-0">{{ vendor.name }}</h4>
   <div>
+    <a href="/ledger/vendor/{{ vendor.id }}" class="btn btn-outline-dark btn-sm">Ledger</a>
     {% if perms.edit %}
     <a href="/vendors/{{ vendor.id }}/edit" class="btn btn-outline-secondary btn-sm">Edit</a>
     {% endif %}

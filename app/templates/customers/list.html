@@ -6,6 +6,7 @@
   <div class="d-flex align-items-center gap-2">
     <input type="text" id="searchBox" class="form-control form-control-sm" style="width:220px;"
            placeholder="Search customers..." oninput="filterRows()">
+    <a href="/ledger?kind=customer" class="btn btn-outline-dark btn-sm text-nowrap">Ledgers</a>
     {% if perms.add %}
     <a href="/customers/new" class="btn btn-dark btn-sm text-nowrap">+ New Customer</a>
     {% endif %}
