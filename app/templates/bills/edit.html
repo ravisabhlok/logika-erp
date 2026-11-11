@@ -35,10 +35,32 @@
         <textarea name="notes" class="form-control" rows="2">{{ values.notes }}</textarea>
       </div>
     </div>
+    {% if lines_editable %}
+    <h6 class="mt-4">Lines</h6>
+    <table class="table table-sm align-middle">
+      <thead><tr><th>Item</th><th style="width:130px;">Qty</th><th style="width:150px;">Unit price</th><th class="text-end">GST %</th></tr></thead>
+      <tbody>
+      {% for bi in bill.items %}
+        {% set lv = line_values.get(bi.id|string) %}
+        <tr>
+          <td>{{ bi.item.name }}<input type="hidden" name="bill_item_id" value="{{ bi.id }}"></td>
+          <td><input type="number" name="quantity" step="any" min="0" class="form-control form-control-sm" value="{{ lv.quantity if lv else bi.quantity|qty }}"></td>
+          <td><input type="number" name="unit_price" step="0.01" min="0" class="form-control form-control-sm" value="{{ lv.unit_price if lv else '%.2f'|format(bi.unit_price) }}"></td>
+          <td class="text-end">{{ '%.2f'|format(bi.gst_percentage or 0) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <p class="text-muted small mb-0">
+      Set a quantity to 0 to drop a line. This only corrects the bill itself &mdash; stock was already updated when the
+      purchase order was received, and is not changed here. The new total can't be less than what is already paid.
+    </p>
+    {% else %}
     <p class="text-muted small mt-3 mb-0">
-      Vendor, items and amounts can't be edited here because they drive stock and payments. To change those,
+      This bill added stock directly, so its vendor, items and amounts can't be edited here. To change those,
       remove any payments, cancel this bill and record a new one.
     </p>
+    {% endif %}
     <div class="mt-3">
       <button class="btn btn-dark">Save</button>
       <a href="/bills/{{ bill.id }}" class="btn btn-link">Cancel</a>

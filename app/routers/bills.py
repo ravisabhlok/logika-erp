@@ -500,7 +500,7 @@ def bill_detail(bill_id: int, request: Request, db: Session = Depends(get_db), u
     )
 
 
-def _render_edit(request, user, bill, form_values=None, error=None, status_code=200):
+def _render_edit(request, user, bill, form_values=None, error=None, status_code=200, line_values=None):
     values = form_values or {
         "vendor_bill_no": bill.vendor_bill_no,
         "bill_date": bill.bill_date.strftime("%Y-%m-%d"),
@@ -509,14 +509,16 @@ def _render_edit(request, user, bill, form_values=None, error=None, status_code=
     }
     return templates.TemplateResponse(
         "bills/edit.html",
-        {"request": request, "user": user, "bill": bill, "values": values, "error": error},
+        {"request": request, "user": user, "bill": bill, "values": values, "error": error,
+         "lines_editable": bill.purchase_order_id is not None and not bill.stock_updated,
+         "line_values": line_values or {}},
         status_code=status_code,
     )
 
 
 @router.get("/{bill_id}/edit")
 def edit_bill_form(bill_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(require_module_permission("bills", "edit"))):
-    bill = db.query(Bill).options(joinedload(Bill.vendor)).get(bill_id)
+    bill = db.query(Bill).options(joinedload(Bill.vendor), joinedload(Bill.items).joinedload(BillItem.item)).get(bill_id)
     if not bill:
         return RedirectResponse(url="/bills?error=Bill not found", status_code=303)
     if bill.status == "cancelled":
@@ -527,9 +529,14 @@ def edit_bill_form(bill_id: int, request: Request, db: Session = Depends(get_db)
 @router.post("/{bill_id}/edit")
 async def edit_bill(bill_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(require_module_permission("bills", "edit"))):
     """Edit the document-level details of a bill: vendor's bill number, bill date, due date, notes and the attached
-    scan. Vendor, lines and amounts are deliberately not editable here — they drive stock, serials and payments
-    (cancel the bill and record a new one to change those)."""
-    bill = db.query(Bill).options(joinedload(Bill.vendor)).get(bill_id)
+    scan. For a PO-based bill (document-level, never moved stock) the line quantities/prices can be corrected too, as
+    long as the new total isn't below what is already paid or queued. A direct (no-PO) bill moved stock and serials, so
+    its lines stay locked — cancel it and record a new one."""
+    bill = (
+        db.query(Bill)
+        .options(joinedload(Bill.vendor), joinedload(Bill.items).joinedload(BillItem.item), joinedload(Bill.payments))
+        .get(bill_id)
+    )
     if not bill:
         return RedirectResponse(url="/bills?error=Bill not found", status_code=303)
     if bill.status == "cancelled":
@@ -552,7 +559,66 @@ async def edit_bill(bill_id: int, request: Request, db: Session = Depends(get_db
     if new_bill_date is None:
         return _render_edit(request, user, bill, values, "Bill date is required.", 400)
 
+    # Line quantities / prices — only for a bill raised against a PO (document-level: stock was already moved by the
+    # PO's receipt, so changing a line here never touches stock). A quantity of 0 drops the line.
     changes = []
+    if bill.purchase_order_id is not None and not bill.stock_updated and form.getlist("bill_item_id"):
+        submitted = {}
+        for bid, qty_s, price_s in zip(form.getlist("bill_item_id"), form.getlist("quantity"), form.getlist("unit_price")):
+            submitted[bid] = {"quantity": qty_s, "unit_price": price_s}
+        parsed, bad = {}, None
+        for bi in bill.items:
+            row = submitted.get(str(bi.id))
+            if row is None:
+                continue
+            try:
+                qty, price = float(row["quantity"]), float(row["unit_price"])
+            except (TypeError, ValueError):
+                bad = f"Enter a valid quantity and price for {bi.item.name}."
+                break
+            if qty < 0 or price < 0:
+                bad = f"Quantity and price for {bi.item.name} can't be negative."
+                break
+            parsed[bi.id] = (qty, price)
+        keep = [bi for bi in bill.items if bi.id not in parsed or parsed[bi.id][0] > 0]
+        if not bad and not keep:
+            bad = "A bill needs at least one line. Cancel the bill instead if it was recorded by mistake."
+        if not bad:
+            taxable = sum(
+                (parsed[bi.id][0] * parsed[bi.id][1]) if bi.id in parsed else float(bi.total) for bi in keep
+            )
+            gst = sum(
+                ((parsed[bi.id][0] * parsed[bi.id][1]) if bi.id in parsed else float(bi.total)) * float(bi.gst_percentage or 0) / 100
+                for bi in keep
+            )
+            new_total = round(taxable + gst, 2)
+            committed = float(bill.amount_paid or 0) + float(bill_summary(db, bill)["in_progress"])
+            if new_total + 0.005 < committed:
+                bad = (f"New total {new_total:,.2f} is less than the {committed:,.2f} already paid or sent for bank "
+                       f"payment. Remove or withdraw those payments first.")
+        if bad:
+            return _render_edit(request, user, bill, values, bad, 400, line_values=submitted)
+        line_changes = []
+        old_total = float(bill.total_amount or 0)
+        for bi in list(bill.items):
+            if bi.id not in parsed:
+                continue
+            qty, price = parsed[bi.id]
+            if qty <= 0:
+                line_changes.append(f"{bi.item.name} removed")
+                bill.items.remove(bi)
+                db.delete(bi)
+                continue
+            if abs(qty - float(bi.quantity)) > 1e-9 or abs(price - float(bi.unit_price)) > 1e-9:
+                line_changes.append(f"{bi.item.name} {float(bi.quantity):g}x{float(bi.unit_price):g} -> {qty:g}x{price:g}")
+                bi.quantity, bi.unit_price, bi.total = qty, price, qty * price
+        if line_changes:
+            bill.taxable_amount = sum(float(bi.total) for bi in bill.items)
+            bill.gst_amount = sum(float(bi.total) * float(bi.gst_percentage or 0) / 100 for bi in bill.items)
+            bill.total_amount = float(bill.taxable_amount) + float(bill.gst_amount)
+            recompute_bill_status(bill)
+            changes.append("lines: " + ", ".join(line_changes) + f" (total {old_total:,.2f} -> {float(bill.total_amount):,.2f})")
+
     if values["vendor_bill_no"] != bill.vendor_bill_no:
         changes.append(f"bill no {bill.vendor_bill_no} -> {values['vendor_bill_no']}")
         bill.vendor_bill_no = values["vendor_bill_no"]
