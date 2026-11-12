@@ -86,8 +86,10 @@ def file_name_for(company, batch):
     already has, which protects against uploading a batch twice. Fixed on the batch at its first download."""
     if batch.file_name:
         return batch.file_name
-    return (re.sub(r"[^A-Za-z0-9]+", "", (company.name if company else "") or "Bank") + "_"
-            + re.sub(r"[^A-Za-z0-9-]+", "", batch.batch_no) + ".xlsx")
+    m = re.fullmatch(r"PAY-\d\d(\d{6})-(\d+)", batch.batch_no or "")  # PAY-YYYYMMDD-NN -> LSIPL_YYMMDD-NN
+    if m:
+        return f"LSIPL_{m.group(1)}-{m.group(2)}.xlsx"
+    return "LSIPL_" + re.sub(r"[^A-Za-z0-9-]+", "", batch.batch_no or "") + ".xlsx"
 
 
 def next_batch_no(db, pay_date):
