@@ -14,7 +14,7 @@
     {% for b in bills %}
       <tr onclick="window.location='/bills/{{ b.id }}'" style="cursor:pointer;">
         <td>{{ b.bill_ref }}</td>
-        <td>{{ b.vendor.name }}</td>
+        <td><a href="/vendors/{{ b.vendor.id }}" class="text-decoration-none" onclick="event.stopPropagation()">{{ b.vendor.name }}</a></td>
         <td>{{ b.vendor_bill_no }}</td>
         <td>{{ b.bill_date.strftime('%d-%b-%Y') }}</td>
         <td>{% if b.purchase_order %}<span class="text-muted small">{{ b.purchase_order.order_no }}</span>{% else %}<span class="badge bg-info text-dark">Direct — no PO</span>{% endif %}</td>
